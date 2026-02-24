@@ -8,32 +8,32 @@
 #include <vector>
 
 namespace blt::db {
-    struct DieselBundle
-    {
-      public:
+	struct DieselBundle
+	{
+	  public:
         std::string         path;
         std::string         headerPath;
         size_t              DecompressedFileSize;
-        std::vector<size_t> ChunkOffsets;
-    };
+		std::vector<size_t> ChunkOffsets;
+	};
 
-    struct DslFile
-    {
-      public:
-        idstring name;
-        idstring type;
+	struct DslFile
+	{
+	  public:
+		idstring name;
+		idstring type;
         int      fileId;
         int      rawLangId;
-        idstring langId;
+		idstring langId;
 
-        /**
-         * If there are multiple of this kind of asset, but in different languages, then this
-         * points to another file with the same name/type but a different language.
-         */
-        DslFile* next = nullptr;
+		/**
+		 * If there are multiple of this kind of asset, but in different languages, then this
+		 * points to another file with the same name/type but a different language.
+		 */
+		DslFile* next = nullptr;
 
-        // These are used for reading, and are picked up from the bundle headers
-        DieselBundle* bundle = nullptr;
+		// These are used for reading, and are picked up from the bundle headers
+		DieselBundle* bundle = nullptr;
         unsigned int  offset = ~0u;
         unsigned int  length = ~0u;
 
@@ -43,27 +43,31 @@ namespace blt::db {
 
         [[nodiscard]] std::pair<idstring, idstring> Key() const { return std::pair<idstring, idstring>(name, type); }
 
-        [[nodiscard]] std::vector<uint8_t> ReadContents(std::istream& fi) const;
-    };
+		[[nodiscard]] std::vector<uint8_t> ReadContents(std::istream& fi) const;
+	};
 
-    class DieselDB
-    {
-      private:
-        DieselDB();
+	class DieselDB
+	{
+	  private:
+		DieselDB();
+		~DieselDB();
 
-      public:
+	  public:
         DieselDB(const DieselDB&)            = delete;
-        DieselDB& operator=(const DieselDB&) = delete;
+		DieselDB& operator=(const DieselDB&) = delete;
 
-        DslFile* Find(idstring name, idstring ext);
+		DslFile* Find(idstring name, idstring ext);
 
-        static DieselDB* Instance();
+		static DieselDB* Instance();
 
-        BLTAbstractDataStore* Open(DieselBundle* bundle);
+		BLTAbstractDataStore* Open(DieselBundle* bundle);
 
-      private:
+		static void Cleanup();
+
+	  private:
         std::vector<DslFile>                              filesList;
-        std::map<std::pair<idstring, idstring>, DslFile*> files;
-    };
+		std::map<std::pair<idstring, idstring>, DslFile*> files;
+		static std::vector<DieselBundle*> bundles;
+	};
 
 }; // namespace blt::db

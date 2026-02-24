@@ -34,18 +34,21 @@ namespace raidhook
 
 	class HTTPManager
 	{
-	private:
+	  private:
 		HTTPManager();
 
-	public:
+	  public:
 		~HTTPManager();
 
 		static HTTPManager* GetSingleton();
 
 		void LaunchHTTPRequest(std::unique_ptr<HTTPItem> callback);
-	private:
+		void CleanupFinishedThreads();
+
+	  private:
 		std::list<std::unique_ptr<std::thread>> threadList;
+		std::mutex threadListMutex;
 	};
-}
+} // namespace raidhook
 
 #endif // __HTTP_HEADER__

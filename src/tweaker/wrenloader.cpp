@@ -543,11 +543,15 @@ const char* tweaker::transform_file(const char* text)
 	if (result2 == WREN_RESULT_COMPILE_ERROR)
 	{
 		RAIDHOOK_LOG_ERROR("Wren tweak file failed: compile error!");
+		wrenReleaseHandle(vm, tweakerClass);
+		wrenReleaseHandle(vm, sig);
 		return text;
 	}
 	else if (result2 == WREN_RESULT_RUNTIME_ERROR)
 	{
 		RAIDHOOK_LOG_ERROR("Wren tweak file failed: runtime error!");
+		wrenReleaseHandle(vm, tweakerClass);
+		wrenReleaseHandle(vm, sig);
 		return text;
 	}
 

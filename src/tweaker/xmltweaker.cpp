@@ -78,14 +78,14 @@ char* tweaker::tweak_raid_xml(char* text, int text_length)
 
 	/*static int counter = 0;
 	if (counter++ == 1) {
-		printf("%s\n", buffer);
+	    printf("%s\n", buffer);
 
-		const int kMaxCallers = 62;
-		void* callers[kMaxCallers];
-		int count = CaptureStackBackTrace(0, kMaxCallers, callers, NULL);
-		for (int i = 0; i < count; i++)
-			printf("*** %d called from .text:%08X\n", i, callers[i]);
-		Sleep(20000);
+	    const int kMaxCallers = 62;
+	    void* callers[kMaxCallers];
+	    int count = CaptureStackBackTrace(0, kMaxCallers, callers, NULL);
+	    for (int i = 0; i < count; i++)
+	        printf("*** %d called from .text:%08X\n", i, callers[i]);
+	    Sleep(20000);
 	}*/
 
 	return (char*)buffer;
@@ -102,4 +102,14 @@ void tweaker::free_tweaked_raid_xml(char* text)
 void raidhook::tweaker::ignore_file(idfile file)
 {
 	ignored_files.insert(file);
+}
+
+void raidhook::tweaker::cleanup_tweaker()
+{
+	for (char* buffer : buffers)
+	{
+		free(buffer);
+	}
+	buffers.clear();
+	ignored_files.clear();
 }

@@ -24,7 +24,7 @@ namespace raidhook
 			long byteProgress;
 			long byteTotal;
 		};
-	}
+	} // namespace
 
 	using HTTPProgressNotificationPtr = std::unique_ptr<HTTPProgressNotification>;
 	using HTTPItemPtr = std::unique_ptr<HTTPItem>;
@@ -47,6 +47,13 @@ namespace raidhook
 		{
 			t->join();
 		});
+		threadList.clear();
+	}
+
+	void HTTPManager::CleanupFinishedThreads()
+	{
+		std::lock_guard<std::mutex> lock(threadListMutex);
+		threadList.remove_if([](const std::unique_ptr<std::thread>& t) { return !t->joinable(); });
 	}
 
 	HTTPManager* HTTPManager::GetSingleton()
@@ -124,8 +131,8 @@ namespace raidhook
 		curl = curl_easy_init();
 		curl_easy_setopt(curl, CURLOPT_URL, item->url.c_str());
 		curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-		curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
-		curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
+		curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
+		curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
 
 		curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 30L);
 		curl_easy_setopt(curl, CURLOPT_TIMEOUT, 900L);
@@ -160,8 +167,12 @@ namespace raidhook
 		// Probably a lot.
 		// I'll manage them I guess, but I've no idea when to tell them to join which I believe is part of the constructor.
 
+		// Clean up finished threads periodically to prevent memory buildup
+		CleanupFinishedThreads();
+
+		std::lock_guard<std::mutex> lock(threadListMutex);
 		// VC++ 2013 bug, can't pass a unique_ptr through a thread
 		// should be: threadList.push_back(std::unique_ptr<std::thread>(new std::thread(launch_thread_http, std::move(callback)));
 		threadList.push_back(std::unique_ptr<std::thread>(new std::thread(launch_thread_http, callback.release())));
 	}
-}
+} // namespace raidhook

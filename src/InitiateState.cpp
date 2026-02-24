@@ -384,7 +384,7 @@ namespace raidhook
 		const char* filename = lua_tolstring(L, 1, &length);
 
 		Util::FileType type = Util::GetFileType(filename);
-		if (Util::GetFileType(filename) != Util::FileType_Directory)
+		if (type != Util::FileType_Directory)
 		{
 			luaL_error(L, "Invalid directory %s: type=%d (none=%d,file=%d,dir=%d)", filename, type,
 			           Util::FileType_None, Util::FileType_File, Util::FileType_Directory);
@@ -411,7 +411,7 @@ namespace raidhook
 		const char * filename = lua_tolstring(L, 1, &l);
 
 		Util::FileType type = Util::GetFileType(filename);
-		if (Util::GetFileType(filename) != Util::FileType_File)
+		if (type != Util::FileType_File)
 		{
 			luaL_error(L, "Invalid file %s: type=%d (file=%d,dir=%d,none=%d)", filename, type,
 			           Util::FileType_File, Util::FileType_Directory, Util::FileType_None);
@@ -474,17 +474,17 @@ namespace raidhook
 
 	/*static int luaF_createconsole(lua_State* L) // TODO reenable
 	{
-		if (gbl_mConsole) return 0;
-		gbl_mConsole = new CConsole();
-		return 0;
+	    if (gbl_mConsole) return 0;
+	    gbl_mConsole = new CConsole();
+	    return 0;
 	}
 
 	static int luaF_destroyconsole(lua_State* L)
 	{
-		if (!gbl_mConsole) return 0;
-		delete gbl_mConsole;
-		gbl_mConsole = NULL;
-		return 0;
+	    if (!gbl_mConsole) return 0;
+	    delete gbl_mConsole;
+	    gbl_mConsole = NULL;
+	    return 0;
 	}*/
 
 	static int luaF_print(lua_State* L)
@@ -774,7 +774,7 @@ namespace raidhook
 		lua_pushstring(L, strVersion.c_str());
 		return 1;
 	}
-	
+
 	static int luaF_flush_log(lua_State* L)
 	{
 		Logging::Logger::Instance().flush();
@@ -851,10 +851,12 @@ namespace raidhook
 
 	void DestroyStates()
 	{
+		blt::db::DieselDB::Cleanup();
+		raidhook::tweaker::cleanup_tweaker();
 		blt::platform::ClosePlatform();
 	}
 
-}
+} // namespace raidhook
 
 using namespace raidhook;
 
@@ -931,7 +933,7 @@ namespace blt
 				{
 					int result = MessageBox(NULL, "It appears you have a vanilla BLT basemod. This is incompatible with SuperBLT.\n"
 					                         "Please delete your 'mods/base' folder, and run the game again to automatically download a compatible version",
-					                         "BLT basemod outdated", MB_OK);
+					               "BLT basemod outdated", MB_OK);
 
 					exit(1);
 					return;
@@ -956,7 +958,7 @@ namespace blt
 			luaL_Reg consoleLib[] =
 			{
 				/*{ "CreateConsole", luaF_createconsole }, // TODO reenable
-				{ "DestroyConsole", luaF_destroyconsole },*/
+			                         { "DestroyConsole", luaF_destroyconsole },*/
 				{ NULL, NULL }
 			};
 			luaL_register(L, "console", consoleLib);
@@ -1026,7 +1028,7 @@ namespace blt
 				RAIDHOOK_LOG_ERROR(lua_tolstring(L, -1, &len));
 				return;
 			}
-			
+
 			result = lua_pcall(L, 0, 0, 0);
 			if (result != 0)
 			{
@@ -1070,7 +1072,7 @@ namespace blt
 
 			updates++;
 		}
-	};
+	}; // namespace lua_functions
 
 	void plugins::RegisterPluginForActiveStates(Plugin * plugin)
 	{
@@ -1079,4 +1081,4 @@ namespace blt
 			plugin->AddToState(state);
 		}
 	}
-};
+}; // namespace blt
