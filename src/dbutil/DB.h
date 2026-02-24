@@ -67,6 +67,8 @@ namespace blt::db {
 	  private:
         std::vector<DslFile>                              filesList;
 		std::map<std::pair<idstring, idstring>, DslFile*> files;
+
+	  public:
 		static std::vector<DieselBundle*> bundles;
 	};
 

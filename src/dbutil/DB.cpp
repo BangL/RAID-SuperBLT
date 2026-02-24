@@ -60,7 +60,7 @@ static std::vector<T> loadVector(uint8_t* in, int offset, dsl_Vector& vec)
 	if (static_cast<size_t>(vec.ElementOffset) + size > 0x7FFFFFFF)
 		throw std::runtime_error("Vector size too large, possible corrupted data");
 
-    // Read the vector contents
+	// Read the vector contents
 	memcpy(data.data(), ptr, size);
 	return data;
 }
@@ -82,7 +82,7 @@ static std::vector<T> loadVector(std::istream& in, int offset, dsl_Vector& vec)
 	std::vector<T> data;
 	data.resize(vec.ElementCount);
 
-    // Read the vector contents
+	// Read the vector contents
 	pos_t pos = in.tellg();
 	in.seekg(vec.ElementOffset + offset);
 	in.read((char*)data.data(), size);
@@ -230,7 +230,7 @@ std::vector<uint8_t> DslFile::ReadContents(std::istream& fi) const
 				actualDestSize -= bufferOffset;
 			}
 
-			size_t copySize = std::min(actualDestSize, static_cast<size_t>(realLength - destFileOffset));
+			size_t copySize = (std::min)(actualDestSize, static_cast<size_t>(realLength - destFileOffset));
 			memcpy(result.data() + destFileOffset, dataPtr, copySize);
 			destFileOffset += copySize;
 
