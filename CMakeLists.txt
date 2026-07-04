@@ -16,8 +16,8 @@ endif()
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_EXTENSIONS OFF)
 set(CMAKE_C_STANDARD_REQUIRED ON)
-# Use C++ 20, no gnu ext
-set(CMAKE_CXX_STANDARD 20)
+# Use C++ 23, no gnu ext
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -50,7 +50,7 @@ target_include_directories(mxml PUBLIC lib/mxml)
 
 file(GLOB_RECURSE wren_sources
 	# Public source file
-	lib/wren/src/include/wren.h 
+	lib/wren/src/include/wren.h
 	# Core VM files
 	lib/wren/src/vm/*.c
 	lib/wren/src/vm/*.h
@@ -300,22 +300,25 @@ target_link_libraries(SuperBLT lua51)
 ## loader binary (this generates a seperate target for both Windows loaders) ##
 ###############################################################################
 
-# Define the macro
-macro(Add_Loader library_name)
-	add_library(${library_name} SHARED ${ARGN})
-	target_link_libraries(${library_name} LINK_PRIVATE SuperBLT)
-endmacro()
+set(LOADER_GEN_ASM "${CMAKE_CURRENT_BINARY_DIR}/loader/loader_asm.gen.asm")
+set(LOADER_GEN_H "${CMAKE_CURRENT_BINARY_DIR}/loader/loader_asm.gen.h")
+set(LOADER_GEN_DEF "${CMAKE_CURRENT_BINARY_DIR}/loader/loader_asm.gen.def")
+add_custom_command(
+	OUTPUT "${LOADER_GEN_ASM}" "${LOADER_GEN_H}" "${LOADER_GEN_DEF}"
+	COMMAND ${Python3_EXECUTABLE} loader/generate_asm.py --asm "${LOADER_GEN_ASM}" --header "${LOADER_GEN_H}" --def "${LOADER_GEN_DEF}"
+	MAIN_DEPENDENCY loader/generate_asm.py
+	DEPENDS loader/iphp.def loader/wsock.def
+	WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+	VERBATIM
+)
 
-if(MSVC)
-	set(LOADER_ASM loader/loader.asm)
-	set_property(SOURCE loader/loader.asm PROPERTY LANGUAGE ASM_MASM)
-else()
-	set(LOADER_ASM loader/loader_gas.S)
-endif()
-Add_Loader("IPHLPAPI" ${LOADER_ASM} loader/iphp.cpp loader/iphp.def src/Resource.rc)
-Add_Loader("WSOCK32" ${LOADER_ASM} loader/wsock.cpp loader/wsock.def src/Resource.rc)
+add_library(WSOCK32 SHARED loader/loader.cpp loader/loader.asm src/Resource.rc "${LOADER_GEN_ASM}" "${LOADER_GEN_DEF}")
+target_link_libraries(WSOCK32 LINK_PRIVATE SuperBLT)
+target_include_directories(WSOCK32 PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/loader")
 
-target_compile_options(IPHLPAPI PRIVATE -DBLT_USE_IPHLPAPI)
+set_property(SOURCE loader/loader.asm PROPERTY LANGUAGE ASM_MASM)
+set_property(SOURCE "${LOADER_GEN_ASM}" PROPERTY LANGUAGE ASM_MASM)
+
 target_compile_options(WSOCK32 PRIVATE -DBLT_USE_WSOCK)
 
 ###############################################################################
