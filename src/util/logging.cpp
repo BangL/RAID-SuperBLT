@@ -1,6 +1,5 @@
 #include "global.h"
 #include "util/util.h"
-#include "debug/blt_debug.h"
 
 #include <ctime>
 #include <fstream>
@@ -152,10 +151,6 @@ namespace raidhook
 				std::lock_guard<std::mutex> lock(GetLoggerMutex());
 
 				std::cout << msg << mEndl;
-
-#ifdef ENABLE_DEBUG
-				DebugConnection::Log(msg);
-#endif
 
 				if (!mIsOpen)
 				{
