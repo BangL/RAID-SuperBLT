@@ -9,7 +9,6 @@
 #include "util/util.h"
 #include "threading/queue.h"
 #include "http/http.h"
-#include "debug/blt_debug.h"
 #include "tweaker/xmltweaker.h"
 #include "tweaker/wren_lua_interface.h"
 #include "plugins/plugins.h"
@@ -794,7 +793,7 @@ namespace raidhook
 		lua_pushstring(L, strVersion.c_str());
 		return 1;
 	}
-	
+
 	static int luaF_flush_log(lua_State* L)
 	{
 		Logging::Logger::Instance().flush();
@@ -861,11 +860,6 @@ namespace raidhook
 
 	void InitiateStates()
 	{
-		// Set up debugging right away, for log viewing
-#ifdef ENABLE_DEBUG
-		DebugConnection::Initialize();
-#endif
-
 		blt::platform::InitPlatform();
 	}
 
@@ -1027,10 +1021,6 @@ namespace blt
 
 			lua_pop(L, 1); // pop the BLT library
 
-#ifdef ENABLE_DEBUG
-			DebugConnection::AddGlobals(L);
-#endif
-
 			for (plugins::Plugin *plugin : plugins::GetPlugins())
 			{
 				plugin->AddToState(L);
@@ -1046,7 +1036,7 @@ namespace blt
 				RAIDHOOK_LOG_ERROR(lua_tolstring(L, -1, &len));
 				return;
 			}
-			
+
 			result = lua_pcall(L, 0, 0, 0);
 			if (result != 0)
 			{
@@ -1078,10 +1068,6 @@ namespace blt
 
 			for (lua_State*& state : activeStates)
 			{
-#ifdef ENABLE_DEBUG
-				DebugConnection::Update(state);
-#endif
-
 				for (plugins::Plugin *plugin : plugins::GetPlugins())
 				{
 					plugin->Update(state);

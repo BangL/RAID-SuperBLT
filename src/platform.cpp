@@ -24,16 +24,7 @@ blt::idstring *blt::platform::last_loaded_name = idstring_none, *blt::platform::
 
 void blt::platform::InitPlatform()
 {
-	ifstream infiledebug("mods/debugger.txt");
-	if (infiledebug.good())
-	{
-		MessageBox(NULL, "Debug Me", "Debug Me", MB_OK);
-	}
-
 	// Set up logging first, so we can see messages from the signature search process
-#ifdef INJECTABLE_BLT
-	gbl_mConsole = new CConsole();
-#else
 	ifstream infileconsole("mods/developer.txt");
 	string debug_mode;
 	if (infileconsole.good())
@@ -48,7 +39,6 @@ void blt::platform::InitPlatform()
 
 	if (debug_mode != "disabled")
 		console = new CConsole();
-#endif
 
 	// remove left over dll if it exists
 	if (std::filesystem::exists("WSOCK32.dll.old"))
