@@ -218,5 +218,15 @@ namespace raidhook
 			return ret;
 		}
 
+		std::string GetModuleFileNameCxx(HMODULE hModule)
+		{
+			std::string buffer(MAX_PATH, '\0');
+			DWORD len = GetModuleFileNameA(hModule, buffer.data(), buffer.size());
+			// len is 0 for an error, which just makes us return an empty string.
+
+			buffer.resize(len);
+			return buffer;
+		}
+
 	} // namespace Util
 } // namespace raidhook
