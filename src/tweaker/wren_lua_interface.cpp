@@ -7,6 +7,7 @@
 #include "wren_lua_interface.h"
 
 #include <map>
+#include <string>
 #include <mutex>
 #include <string.h>
 

@@ -1,6 +1,6 @@
 #include <windows.h>
 #include <conio.h>
-#include <FCNTL.H>
+#include <fcntl.h>
 #include <io.h>
 #include "console.h"
 #include <iostream>

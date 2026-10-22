@@ -81,9 +81,9 @@ static void* Archive_ctor(Archive* archive, PDString* pd_name, BLTAbstractDataSt
 {
 	archive->position = pos;
 	archive->length = len;
-	archive->qword30 = 0i64;
+	archive->qword30 = 0ULL;
 	archive->word38 = ukn;
-	archive->qword40 = 0i64;
+	archive->qword40 = 0ULL;
 
 	#pragma warning(suppress : 6031) // Complains about not using the return data.
 	InitializeCriticalSectionAndSpinCount(&archive->rtl_critical_section48, 0xFA0u);

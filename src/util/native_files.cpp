@@ -2,7 +2,7 @@
 //Some other stuff might be aswell, but this is rather desperately windows only.
 
 #include "util/util.h"
-#include <Windows.h>
+#include <windows.h>
 #include <tchar.h>
 #include <stdio.h>
 #include <strsafe.h>

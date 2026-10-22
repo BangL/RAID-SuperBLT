@@ -6,7 +6,11 @@ project(SuperBLT CXX C)
 ## misc. definitions ##########################################################
 ###############################################################################
 
-enable_language(ASM_MASM)
+if(MSVC)
+	enable_language(ASM_MASM)
+else()
+	enable_language(ASM)
+endif()
 
 # Use C 11, no gnu ext
 set(CMAKE_C_STANDARD 11)
@@ -39,6 +43,9 @@ list(TRANSFORM mxml_sources PREPEND lib/mxml/)
 add_library(mxml STATIC ${mxml_sources})
 target_include_directories(mxml PRIVATE lib/configs/mxml)
 target_compile_options(mxml PRIVATE -D_CRT_SECURE_NO_WARNINGS)
+if(NOT MSVC)
+	target_compile_options(mxml PRIVATE -include io.h)
+endif()
 target_include_directories(mxml PUBLIC lib/mxml)
 
 file(GLOB_RECURSE wren_sources
@@ -92,6 +99,10 @@ target_compile_options(SuperBLT PRIVATE
 	-DCURL_STATICLIB
 	-DSUBHOOK_STATIC
 )
+if(NOT MSVC)
+	# the signature code casts between function and data pointers (MSVC allows it)
+	target_compile_options(SuperBLT PRIVATE -fpermissive)
+endif()
 
 # General optimisation breaks calls to certain lua functions, so replace it.
 # We statically link to reduce dependencies
@@ -102,10 +113,20 @@ foreach(flag_var CMAKE_CXX_FLAGS CMAKE_CXX_FLAGS_DEBUG CMAKE_CXX_FLAGS_RELEASE C
 endforeach(flag_var)
 
 # Link against libraries
-target_link_libraries(SuperBLT crypt32.lib ws2_32.lib version.lib)
+if(MSVC)
+	target_link_libraries(SuperBLT crypt32.lib ws2_32.lib version.lib)
+else()
+	target_link_libraries(SuperBLT crypt32 ws2_32 version)
+endif()
 
 # Allow both SuperBLT and the loaders access to the headers
 target_include_directories(SuperBLT PUBLIC src)
+
+if(NOT MSVC)
+	# no mingw runtime DLLs next to the game, link them statically
+	set(CMAKE_SHARED_LIBRARY_PREFIX "")
+	target_link_options(SuperBLT PUBLIC -static -static-libgcc -static-libstdc++)
+endif()
 
 # Make the generated wren header available
 target_include_directories(SuperBLT PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/gen)
@@ -285,10 +306,14 @@ macro(Add_Loader library_name)
 	target_link_libraries(${library_name} LINK_PRIVATE SuperBLT)
 endmacro()
 
-Add_Loader("IPHLPAPI" loader/loader.asm loader/iphp.cpp loader/iphp.def src/Resource.rc)
-Add_Loader("WSOCK32" loader/loader.asm loader/wsock.cpp loader/wsock.def src/Resource.rc)
-
-set_property(SOURCE loader/loader.asm PROPERTY LANGUAGE ASM_MASM)
+if(MSVC)
+	set(LOADER_ASM loader/loader.asm)
+	set_property(SOURCE loader/loader.asm PROPERTY LANGUAGE ASM_MASM)
+else()
+	set(LOADER_ASM loader/loader_gas.S)
+endif()
+Add_Loader("IPHLPAPI" ${LOADER_ASM} loader/iphp.cpp loader/iphp.def src/Resource.rc)
+Add_Loader("WSOCK32" ${LOADER_ASM} loader/wsock.cpp loader/wsock.def src/Resource.rc)
 
 target_compile_options(IPHLPAPI PRIVATE -DBLT_USE_IPHLPAPI)
 target_compile_options(WSOCK32 PRIVATE -DBLT_USE_WSOCK)
@@ -297,6 +322,13 @@ target_compile_options(WSOCK32 PRIVATE -DBLT_USE_WSOCK)
 ## build external updater for dll                                            ##
 ###############################################################################
 add_executable(SBLT_DLL_UPDATER updater/updater.cpp updater/compression.cpp updater/Resource.rc)
-target_link_libraries(SBLT_DLL_UPDATER crypt32.lib ws2_32.lib version.lib)
+if(MSVC)
+	target_link_libraries(SBLT_DLL_UPDATER crypt32.lib ws2_32.lib version.lib)
+else()
+	target_link_libraries(SBLT_DLL_UPDATER crypt32 ws2_32 version)
+endif()
 target_link_libraries(SBLT_DLL_UPDATER psl zlib-ng libcurl_static)
+if(NOT MSVC)
+	target_link_options(SBLT_DLL_UPDATER PRIVATE -static -static-libgcc -static-libstdc++)
+endif()
 target_include_directories(SBLT_DLL_UPDATER PRIVATE updater)
