@@ -4,7 +4,7 @@
 #include "platform.h"
 
 #define WIN32_LEAN_AND_MEAN 1
-#include <Windows.h>
+#include <windows.h>
 
 static const char *DOWNLOAD_URL = "https://api.modworkshop.net/mods/49758/download";
 static const char *OUT_FILE_NAME = "blt_basemod_download.zip";

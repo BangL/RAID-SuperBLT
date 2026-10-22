@@ -12,7 +12,7 @@
 #include <filesystem>
 
 #define WIN32_LEAN_AND_MEAN 1
-#include <Windows.h>
+#include <windows.h>
 
 using namespace std;
 using namespace raidhook;

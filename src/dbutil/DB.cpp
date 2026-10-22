@@ -187,7 +187,7 @@ std::vector<uint8_t> DslFile::ReadContents(std::istream& fi) const
                 destSize -= bufferOffset;
             }
 
-            memcpy(result.data() + destFileOffset, dataPtr, min(destSize, (realLength - destFileOffset)));
+            memcpy(result.data() + destFileOffset, dataPtr, (std::min<size_t>)(destSize, (realLength - destFileOffset)));
             destFileOffset += destSize;
 
             ++blockIdx;
