@@ -13,9 +13,12 @@
 [submodule "lib/luajit"]
 	path = lib/luajit
 	url = https://github.com/LeonTheo02/LuaJIT.git
-[submodule "lib/subhook"]
-	path = lib/subhook
-	url = https://github.com/BangL/subhook.git
+[submodule "lib/safetyhook"]
+	path = lib/safetyhook
+	url = https://github.com/cursey/safetyhook.git
+[submodule "lib/zydis"]
+	path = lib/zydis
+	url = https://github.com/zyantific/zydis.git
 [submodule "lib/sys/libpsl"]
 	path = lib/sys/libpsl
 	url = https://github.com/rockdaboot/libpsl.git

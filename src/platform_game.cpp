@@ -1,5 +1,5 @@
 #include "lua_functions.h"
-#include "subhook.h"
+#include "hook_util.h"
 
 #include "tweaker/xmltweaker.h"
 
@@ -7,7 +7,10 @@
 #include <util/util.h>
 
 static std::thread::id main_thread_id;
-static subhook::Hook applicationUpdateDetour, newStateDetour, luaCloseDetour, node_from_xmlDetour;
+SBLT_DECLARE_HOOK(applicationUpdateDetour);
+SBLT_DECLARE_HOOK(newStateDetour);
+SBLT_DECLARE_HOOK(luaCloseDetour);
+SBLT_DECLARE_HOOK(node_from_xmlDetour);
 
 static void init_idstring_pointers()
 {
@@ -28,9 +31,7 @@ static void init_idstring_pointers()
 
 static void* ctor_lua_Alloc_new(void* ud, void* ptr, size_t osize, size_t nsize)
 {
-	subhook::ScopedHookRemove scoped_remove(&newStateDetour);
-
-	void* ret = ctor_lua_Alloc(ud, ptr, osize, nsize);
+	void* ret = newStateDetour.call<void*>(ud, ptr, osize, nsize);
 
 	lua_State* L = (lua_State*)*((void**)ud);
 	size_t pVal = reinterpret_cast<size_t>(ptr);
@@ -45,28 +46,22 @@ static void* ctor_lua_Alloc_new(void* ud, void* ptr, size_t osize, size_t nsize)
 
 static void* application_update_new(void* _unk0, int* _unk1, int* _unk2)
 {
-	subhook::ScopedHookRemove scoped_remove(&applicationUpdateDetour);
-
 	if (std::this_thread::get_id() == main_thread_id)
 	{
 		blt::lua_functions::update();
 	}
 
-	return application_update(_unk0, _unk1, _unk2);
+	return applicationUpdateDetour.call<void*>(_unk0, _unk1, _unk2);
 }
 
 static void lua_close_new(lua_State* L)
 {
-	subhook::ScopedHookRemove scoped_remove(&luaCloseDetour);
-
 	blt::lua_functions::close(L);
-	lua_close_exe(L);
+	luaCloseDetour.call<void>(L);
 }
 
 static void node_from_xml_new(void* node, char* data, int* len)
 {
-	subhook::ScopedHookRemove scoped_remove(&node_from_xmlDetour);
-
 	char* modded = raidhook::tweaker::tweak_raid_xml(data, *len);
 	int modLen = *len;
 
@@ -75,7 +70,7 @@ static void node_from_xml_new(void* node, char* data, int* len)
 		modLen = strlen(modded);
 	}
 
-	node_from_xml(node, modded, &modLen);
+	node_from_xmlDetour.call<void>(node, modded, &modLen);
 
 	raidhook::tweaker::free_tweaked_raid_xml(modded);
 }
@@ -84,10 +79,10 @@ static void setup_platform_game()
 {
 	main_thread_id = std::this_thread::get_id();
 
-	applicationUpdateDetour.Install(application_update, application_update_new, subhook::HookFlags::HookFlag64BitOffset);
-	newStateDetour.Install(ctor_lua_Alloc, ctor_lua_Alloc_new, subhook::HookFlags::HookFlag64BitOffset);
-	luaCloseDetour.Install(lua_close_exe, lua_close_new, subhook::HookFlags::HookFlag64BitOffset);
-	node_from_xmlDetour.Install(node_from_xml, node_from_xml_new, subhook::HookFlags::HookFlag64BitOffset);
+	blt::hooks::install(applicationUpdateDetour, application_update, application_update_new, "application_update");
+	blt::hooks::install(newStateDetour, ctor_lua_Alloc, ctor_lua_Alloc_new, "ctor_lua_Alloc");
+	blt::hooks::install(luaCloseDetour, lua_close_exe, lua_close_new, "lua_close");
+	blt::hooks::install(node_from_xmlDetour, node_from_xml, node_from_xml_new, "node_from_xml");
 
 	init_idstring_pointers();
 }

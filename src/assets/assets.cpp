@@ -7,7 +7,7 @@
 
 #include "assets.h"
 #include "platform.h"
-#include "subhook.h"
+#include "hook_util.h"
 
 #include <stdio.h>
 
@@ -18,7 +18,6 @@
 
 using raidhook::tweaker::dbhook::hook_asset_load;
 
-#define HOOK_FLAG subhook::HookFlags::HookNoFlags
 #include "assets/assets_game.cpp"
 
 // Three hooks for the other try_open functions: property_match_resolver, language_resolver and english_resolver
@@ -29,8 +28,8 @@ DECLARE_PASSTHROUGH(try_open_property_match_resolver)
 
 void blt::win32::InitAssets()
 {
-#define SETUP_PASSTHROUGH(func) hook_##func.Install(func, stub_##func, HOOK_FLAG)
-#define SETUP_PASSTHROUGH_ARRAY(id) hook_##id.Install(try_open_functions.at(id), stub_##id, HOOK_FLAG)
+#define SETUP_PASSTHROUGH(func) blt::hooks::install(hook_##func, func, stub_##func, #func)
+#define SETUP_PASSTHROUGH_ARRAY(id) blt::hooks::install(hook_##id, try_open_functions.at(id), stub_##id, "try_open_" #id)
 
 	if (!try_open_functions.empty())
 		SETUP_PASSTHROUGH_ARRAY(0);
