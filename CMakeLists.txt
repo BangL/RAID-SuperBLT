@@ -304,29 +304,44 @@ target_link_libraries(SuperBLT lua51)
 
 
 ###############################################################################
-## loader binary (this generates a seperate target for both Windows loaders) ##
+## loader binaries (WSOCK32.dll and IPHLPAPI.dll are the same code) ###########
 ###############################################################################
 
-set(LOADER_GEN_ASM "${CMAKE_CURRENT_BINARY_DIR}/loader/loader_asm.gen.asm")
+# MSVC assembles MASM, MinGW takes GNU as in Intel syntax. See loader/README.md
+if(MSVC)
+	set(LOADER_ASM_SYNTAX masm)
+	set(LOADER_GEN_ASM "${CMAKE_CURRENT_BINARY_DIR}/loader/loader_asm.gen.asm")
+	set(LOADER_MANUAL_ASM loader/loader.asm)
+	set_property(SOURCE "${LOADER_MANUAL_ASM}" "${LOADER_GEN_ASM}" PROPERTY LANGUAGE ASM_MASM)
+else()
+	set(LOADER_ASM_SYNTAX gas)
+	set(LOADER_GEN_ASM "${CMAKE_CURRENT_BINARY_DIR}/loader/loader_asm.gen.S")
+	set(LOADER_MANUAL_ASM loader/loader_gas.S)
+endif()
 set(LOADER_GEN_H "${CMAKE_CURRENT_BINARY_DIR}/loader/loader_asm.gen.h")
 set(LOADER_GEN_DEF "${CMAKE_CURRENT_BINARY_DIR}/loader/loader_asm.gen.def")
 add_custom_command(
 	OUTPUT "${LOADER_GEN_ASM}" "${LOADER_GEN_H}" "${LOADER_GEN_DEF}"
-	COMMAND ${Python3_EXECUTABLE} loader/generate_asm.py --asm "${LOADER_GEN_ASM}" --header "${LOADER_GEN_H}" --def "${LOADER_GEN_DEF}"
+	COMMAND ${Python3_EXECUTABLE} loader/generate_asm.py --syntax ${LOADER_ASM_SYNTAX} --asm "${LOADER_GEN_ASM}" --header "${LOADER_GEN_H}" --def "${LOADER_GEN_DEF}"
 	MAIN_DEPENDENCY loader/generate_asm.py
 	DEPENDS loader/iphp.def loader/wsock.def
 	WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
 	VERBATIM
 )
 
-add_library(WSOCK32 SHARED loader/loader.cpp loader/loader.asm src/Resource.rc "${LOADER_GEN_ASM}" "${LOADER_GEN_DEF}")
-target_link_libraries(WSOCK32 LINK_PRIVATE SuperBLT)
-target_include_directories(WSOCK32 PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/loader")
+# Both loader targets use the generated files, so generate them once up front. Otherwise the targets would each run the
+# generator, which races with parallel builds (MSBuild).
+add_custom_target(generate_loader_asm DEPENDS "${LOADER_GEN_ASM}" "${LOADER_GEN_H}" "${LOADER_GEN_DEF}")
 
-set_property(SOURCE loader/loader.asm PROPERTY LANGUAGE ASM_MASM)
-set_property(SOURCE "${LOADER_GEN_ASM}" PROPERTY LANGUAGE ASM_MASM)
+macro(Add_Loader library_name)
+	add_library(${library_name} SHARED loader/loader.cpp ${LOADER_MANUAL_ASM} src/Resource.rc "${LOADER_GEN_ASM}" "${LOADER_GEN_DEF}")
+	add_dependencies(${library_name} generate_loader_asm)
+	target_link_libraries(${library_name} LINK_PRIVATE SuperBLT)
+	target_include_directories(${library_name} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/loader")
+endmacro()
 
-target_compile_options(WSOCK32 PRIVATE -DBLT_USE_WSOCK)
+Add_Loader(WSOCK32)
+Add_Loader(IPHLPAPI)
 
 ###############################################################################
 ## build external updater for dll                                            ##

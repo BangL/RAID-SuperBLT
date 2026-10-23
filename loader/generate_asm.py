@@ -53,7 +53,7 @@ def generate_loader_fn(syms, dll_name):
     body = ""
 
     for sym in syms:
-        body += f"\ttable->{sym.struct_name()} = GetProcAddress(mod, \"{sym.export_name}\");\n"
+        body += f"\ttable->{sym.struct_name()} = reinterpret_cast<void*>(GetProcAddress(mod, \"{sym.export_name}\"));\n"
 
     return f"""
 void LoadDllFunctions{dll_name}(ProxyFunctionTable *table, HMODULE mod) {{
@@ -67,6 +67,8 @@ def main():
     parser.add_argument("--asm", required=True)
     parser.add_argument("--header", required=True)
     parser.add_argument("--def", required=True)
+    parser.add_argument("--syntax", choices=["masm", "gas"], default="masm",
+                        help="assembler dialect of the --asm output: MASM (MSVC) or GNU as in Intel syntax (MinGW)")
 
     args = parser.parse_args()
 
@@ -78,20 +80,35 @@ def main():
     asm_code_resolvers = ""
 
     for sym in syms:
-        asm_code += f"""
+        resolver_id = sym.struct_idx + (DLL_NAME_INDICES.index(sym.dll_name) << 32)
+
+        if args.syntax == "masm":
+            asm_code += f"""
     {sym.internal_name} proc
         mov rax, [SBLT_PROXY_STRUCT_PTR + 0{sym.struct_idx * 8:x}h]
         jmp rax
     {sym.internal_name} endp
 """
-
-        resolver_id = sym.struct_idx + (DLL_NAME_INDICES.index(sym.dll_name) << 32)
-        asm_code_resolvers += f"""
+            asm_code_resolvers += f"""
     {sym.lazy_load_name()} proc
         mov r10, 0{resolver_id :x}h
         mov r11, {sym.internal_name}
         jmp SBLT_PROXY_LOADER_FN
     {sym.lazy_load_name()} endp
+"""
+        else:
+            asm_code += f"""
+.globl {sym.internal_name}
+{sym.internal_name}:
+    mov rax, qword ptr [rip + SBLT_PROXY_STRUCT_PTR + 0x{sym.struct_idx * 8:x}]
+    jmp rax
+"""
+            asm_code_resolvers += f"""
+.globl {sym.lazy_load_name()}
+{sym.lazy_load_name()}:
+    mov r10, 0x{resolver_id :x}
+    lea r11, [rip + {sym.internal_name}]
+    jmp SBLT_PROXY_LOADER_FN
 """
 
     struct_entries = ""
@@ -128,8 +145,8 @@ def main():
     # Make sure there's no duplicate names
     assert len(export_names) == len(set(export_names))
 
-    with open(args.asm, "w") as fi:
-        fi.write(f"""
+    if args.syntax == "masm":
+        asm_file = f"""
 ; AUTO-GENERATED FILE (generate_asm.py) - DO NOT EDIT.
 ;
 ; This contains two sets of functions:
@@ -144,7 +161,26 @@ extern SBLT_PROXY_LOADER_FN : proc
 {asm_code}
 {asm_code_resolvers}
 end
-""".lstrip())
+""".lstrip()
+    else:
+        # No '#' comments, as the file may go through the C preprocessor
+        asm_file = f"""
+/* AUTO-GENERATED FILE (generate_asm.py) - DO NOT EDIT.
+ *
+ * This contains two sets of functions:
+ * - The stubs themselves, which call into the original DLL.
+ * - Resolver functions, which are used to invoke a C function to load the DLL, then jump back to the stub.
+ * These are stored sequentially in a dubious and likely unnecessary attempt at icache efficiency.
+ */
+
+.intel_syntax noprefix
+.text
+{asm_code}
+{asm_code_resolvers}
+""".lstrip()
+
+    with open(args.asm, "w") as fi:
+        fi.write(asm_file)
 
     with open(args.header, "w") as fi:
         fi.write(f"""
