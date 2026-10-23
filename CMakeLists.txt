@@ -22,6 +22,14 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Make __FILE__ (used by the log macros) relative to the source root, e.g. "./src/platform.cpp"
+if(MSVC)
+	file(TO_NATIVE_PATH "${CMAKE_SOURCE_DIR}" SBLT_NATIVE_SOURCE_DIR)
+	add_compile_options("/d1trimfile:${SBLT_NATIVE_SOURCE_DIR}\\")
+else()
+	add_compile_options("-ffile-prefix-map=${CMAKE_SOURCE_DIR}=.")
+endif()
+
 # find python3
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
