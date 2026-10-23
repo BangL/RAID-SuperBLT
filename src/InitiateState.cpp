@@ -878,8 +878,8 @@ namespace raidhook
 			luaL_error(L, "Illegal argument - should be tvgcv (table) or userdata");
 		}
 
-		char buffer[9]; // 8 chars for the address, one for the null
-		snprintf(buffer, sizeof(buffer), "%p", value_ptr);
+		char buffer[17]; // 16 hex digits for the 64-bit address, one for the null
+		snprintf(buffer, sizeof(buffer), "%016llx", static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(value_ptr)));
 
 		lua_pushstring(L, buffer);
 
