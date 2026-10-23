@@ -23,23 +23,30 @@
 #include <thread>
 #include <list>
 #include <fstream>
+#include <mutex>
+#include <vector>
 
 namespace raidhook
 {
 
+	// States can be created and closed on other threads than the one that checks them
+	static std::mutex activeStatesMutex;
 	std::list<lua_State*> activeStates;
 	static void add_active_state(lua_State* L)
 	{
+		std::lock_guard<std::mutex> lock(activeStatesMutex);
 		activeStates.push_back(L);
 	}
 
 	static void remove_active_state(lua_State* L)
 	{
+		std::lock_guard<std::mutex> lock(activeStatesMutex);
 		activeStates.remove(L);
 	}
 
 	bool check_active_state(void* L)
 	{
+		std::lock_guard<std::mutex> lock(activeStatesMutex);
 		std::list<lua_State*>::iterator it;
 		for (it = activeStates.begin(); it != activeStates.end(); it++)
 		{
@@ -49,6 +56,13 @@ namespace raidhook
 			}
 		}
 		return false;
+	}
+
+	// A copy, so plugins can be called without holding the lock
+	static std::vector<lua_State*> get_active_states()
+	{
+		std::lock_guard<std::mutex> lock(activeStatesMutex);
+		return std::vector<lua_State*>(activeStates.begin(), activeStates.end());
 	}
 
 	// Not tracking the error count here so it can automatically be reset to 0 whenever the Lua state is deleted and re-created (e.g.
@@ -1260,7 +1274,7 @@ namespace blt
 				EventQueueMaster::GetSingleton().ProcessEvents();
 			}
 
-			for (lua_State*& state : activeStates)
+			for (lua_State* state : get_active_states())
 			{
 				for (plugins::Plugin *plugin : plugins::GetPlugins())
 				{
@@ -1274,7 +1288,7 @@ namespace blt
 
 	void plugins::RegisterPluginForActiveStates(Plugin * plugin)
 	{
-		for (lua_State *&state : activeStates)
+		for (lua_State* state : get_active_states())
 		{
 			plugin->AddToState(state);
 		}
