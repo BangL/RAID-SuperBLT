@@ -38,8 +38,8 @@ namespace raidhook
 			size_t length_of_arg;
 			HANDLE hFind = INVALID_HANDLE_VALUE;
 			DWORD dwError = 0;
-			StringCchLength(fPath, MAX_PATH, &length_of_arg);
-			if (length_of_arg>MAX_PATH - 3)
+			// Fails (leaving the length unset) for paths of MAX_PATH or more characters
+			if (FAILED(StringCchLength(fPath, MAX_PATH, &length_of_arg)) || length_of_arg > MAX_PATH - 3)
 			{
 				RAIDHOOK_THROW_IO_MSG("Path too long");
 			}
@@ -63,30 +63,19 @@ namespace raidhook
 			while (FindNextFile(hFind, &ffd) != 0);
 
 			dwError = GetLastError();
+			FindClose(hFind);
 			if (dwError != ERROR_NO_MORE_FILES)
 			{
 				RAIDHOOK_THROW_IO_MSG("FindNextFile() failed");
 			}
-			FindClose(hFind);
 			return files;
-		}
-
-		bool IsSymlink(const std::string& path)
-		{
-			DWORD dwAttrib = GetFileAttributes(path.c_str());
-
-			if (dwAttrib == FILE_ATTRIBUTE_REPARSE_POINT)
-			{
-				return true;
-			}
-			return false;
 		}
 
 		bool DirectoryExists(const std::string& dir)
 		{
 			string clean = dir;
 
-			if (clean[clean.length() - 1] == '/')
+			if (!clean.empty() && clean.back() == '/')
 			{
 				clean.erase(clean.end() - 1);
 			}

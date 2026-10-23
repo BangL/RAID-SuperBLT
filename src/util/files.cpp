@@ -34,38 +34,6 @@ namespace raidhook
 			CreateDirectoryPath(finalPath);
 		}
 
-		bool RemoveFilesAndDirectory(const std::string& path)
-		{
-			std::vector<std::string> dirs = raidhook::Util::GetDirectoryContents(path, true);
-			std::vector<std::string> files = raidhook::Util::GetDirectoryContents(path);
-			bool failed = false;
-
-			for (auto it = files.begin(); it < files.end(); it++)
-			{
-				failed = remove((path + "/" + *it).c_str());
-				if (failed)
-					return false;
-			}
-			for (auto it = dirs.begin(); it < dirs.end(); it++)
-			{
-				if (*it == "." || *it == "..")
-					continue;
-
-				// dont follow symlinks, just delete them as a file, recurse on normal directories
-				if (raidhook::Util::IsSymlink(path + "/" + *it))
-				{
-					failed = remove((path + "/" + *it).c_str());
-				}
-				else
-				{
-					failed = raidhook::Util::RemoveFilesAndDirectory(path + "/" + *it) == 0;
-				}
-				if (failed)
-					return false;
-			}
-			return RemoveEmptyDirectory(path);
-		}
-
 		bool CreateDirectoryPath(const std::string& path)
 		{
 			std::string newPath = "";

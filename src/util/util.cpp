@@ -1,5 +1,7 @@
 #include "util.h"
 #include <algorithm>
+#include <filesystem>
+#include <set>
 #include <iomanip>
 #include <iostream>
 #include <sstream>
@@ -83,16 +85,16 @@ namespace raidhook
 					status = BCryptFinishHash(hHash, hash.data(), hashLength, 0);
 					if (status != 0) throw std::runtime_error("Failed to finish hash");
 				}
-				catch (std::runtime_error e)
+				catch (const std::runtime_error&)
 				{
 					BCryptDestroyHash(hHash);
-					throw std::runtime_error(e);
+					throw;
 				}
 			}
-			catch (std::runtime_error e)
+			catch (const std::runtime_error&)
 			{
 				BCryptCloseAlgorithmProvider(hAlgorithm, 0);
-				throw std::runtime_error(e);
+				throw;
 			}
 			BCryptDestroyHash(hHash);
 			BCryptCloseAlgorithmProvider(hAlgorithm, 0);
@@ -100,8 +102,18 @@ namespace raidhook
 			return bytes_to_hex_string(hash);
 		}
 
-		void RecurseDirectoryPaths(std::vector<std::string>& paths, std::string directory, bool ignore_versioning)
+		// 'ancestors' holds the canonical paths of the directories being walked right now. A symlink or junction that
+		// leads back into one of them would recurse forever; any other directory is walked as often as it's linked.
+		static void RecurseDirectoryPathsImpl(std::vector<std::string>& paths, const std::string& directory,
+		                                      bool ignore_versioning, std::set<std::string>& ancestors)
 		{
+			std::error_code ec;
+			std::string canonical = std::filesystem::canonical(directory, ec).string();
+			if (ec)
+				canonical = directory;
+			if (!ancestors.insert(canonical).second)
+				return;
+
 			std::vector<std::string> dirs = raidhook::Util::GetDirectoryContents(directory, true);
 			std::vector<std::string> files = raidhook::Util::GetDirectoryContents(directory);
 			for (auto it = files.begin(); it < files.end(); it++)
@@ -117,8 +129,16 @@ namespace raidhook
 					continue;
 				if (ignore_versioning && (*it == ".hg" || *it == ".git"))
 					continue;
-				RecurseDirectoryPaths(paths, directory + *it + "/", false);
+				RecurseDirectoryPathsImpl(paths, directory + *it + "/", false, ancestors);
 			}
+
+			ancestors.erase(canonical);
+		}
+
+		void RecurseDirectoryPaths(std::vector<std::string>& paths, std::string directory, bool ignore_versioning)
+		{
+			std::set<std::string> ancestors;
+			RecurseDirectoryPathsImpl(paths, directory, ignore_versioning, ancestors);
 		}
 
 		static bool CompareStringsCaseInsensitive(std::string a, std::string b)
