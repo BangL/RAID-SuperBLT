@@ -4,9 +4,23 @@ on:
   push:
     paths:
       - src/**
+      - lib/**
+      - loader/**
+      - updater/**
+      - wren/**
+      - cmake/**
+      - CMakeLists.txt
+      - .github/workflows/create_build.yml
   pull_request:
     paths:
       - src/**
+      - lib/**
+      - loader/**
+      - updater/**
+      - wren/**
+      - cmake/**
+      - CMakeLists.txt
+      - .github/workflows/create_build.yml
 
 env:
   BUILD_TYPE: Release
@@ -19,7 +33,7 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
       with:
-        submodules: true
+        submodules: recursive
   
     - name: Install Python3 and CMake
       run: |
@@ -31,12 +45,6 @@ jobs:
       run: |
          $env:Path += ';C:\Program Files\CMake\bin'
       shell: powershell
-
-    - name: Initialize and update Git submodules
-      run: |
-        git submodule init
-        git submodule update
-      shell: bash
 
     - name: Add msbuild to PATH
       uses: microsoft/setup-msbuild@v2

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Cross-compile the Windows DLLs on Linux (mingw-w64, cmake, ninja, python3)
+# Cross-compile the Windows DLLs on Linux (mingw-w64 with GCC 13+, cmake 3.28+, ninja, python3)
 set -e
 cd "$(dirname "$0")"
 git submodule update --init --recursive

@@ -16,6 +16,10 @@ Visit ![modworkshop.net: RAID-SuperBLT](https://modworkshop.net/mod/49744) to ge
 
 Documentation for SuperBLT can be found on the [SuperBLT Website](https://superblt.znix.xyz). (ignore everything related to XAudio! We don't have that in RAID.)
 
+Additions of this fork are documented in this repository:
+- [doc/dohttpreq.md](doc/dohttpreq.md): HTTP requests from Lua (methods, headers, bodies, cookie jars, ftp, hsts)
+- [loader/README.md](loader/README.md): how the DLL gets loaded into the game
+
 ## Development
 
 How to contribute to SuperBLT:
@@ -30,6 +34,10 @@ if you cloned without `--recursive`, do this in the root of your repo:
 ```
 git submodule update --init --recursive
 ```
+
+Requirements: CMake 3.28 or newer and Python 3, plus either Visual Studio 2022 (17.8 or newer, SafetyHook needs
+C++23) or, on Linux, mingw-w64 (GCC 13 or newer) and Ninja. The dependencies are all submodules, nothing is downloaded
+while building.
 
 You can use Visual Studio or the command line to generate the files and build SuperBLT.
 
@@ -71,6 +79,14 @@ You can symlink using the following in your `RAID World War II` directory. Run:
 ```
 cmd /c mklink WSOCK32.dll <path to SBLT>\build\Debug\WSOCK32.dll
 ```
+
+### Linux
+
+To cross-compile the Windows DLLs on Linux (mingw-w64, Ninja), run `./build-linux.sh`. The result is in `build-linux/`
+(`WSOCK32.dll`, `IPHLPAPI.dll` and `SBLT_DLL_UPDATER.exe`).
+
+`WSOCK32.dll` and `IPHLPAPI.dll` are built from the same code, they only differ in their file name (see
+[loader/README.md](loader/README.md)), so either of them can be used. Don't install both.
 
 ### Code Conventions
 - Avoid `std::shared_ptr` and the likes unless you have a decent reason to use it. If you
