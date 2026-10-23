@@ -99,8 +99,11 @@ void io_read(WrenVM* vm)
 	ifstream handle(file);
 	if (!handle.good())
 	{
-		RAIDHOOK_LOG_ERROR("Wren IO.read: Could not load file " + file);
-		exit(1);
+		std::string message = "Wren IO.read: Could not load file " + file;
+		RAIDHOOK_LOG_ERROR(message);
+		wrenSetSlotString(vm, 0, message.c_str());
+		wrenAbortFiber(vm, 0);
+		return;
 	}
 
 	string contents = file_to_string(handle);
@@ -308,9 +311,12 @@ const char* resolveModule(WrenVM* vm, const char* importer, const char* name)
 		//  of the array to the index of the last element, then three to skip dynamic_import, eval and the import
 		//  script (the bit of code that contains the actual import statement that base/native builds).
 
-		assert(fibre->numFrames >= 4); // Make sure we have enough frames here
-		ObjModule* origin = fibre->frames[fibre->numFrames - 4].closure->fn->module;
-		importer = origin->name->value;
+		// assert() is gone in release builds, and a shorter stack would read before the start of the frames
+		if (fibre->numFrames >= 4)
+		{
+			ObjModule* origin = fibre->frames[fibre->numFrames - 4].closure->fn->module;
+			importer = origin->name->value;
+		}
 
 		// Little utility to generate traces like above:
 		// printf("Caught native import: %s -> %s\n", importer, name);
