@@ -54,6 +54,7 @@ namespace blt
 			}
 			catch (const char* err)
 			{
+				// Legacy plugin backends throw C strings, normalise to std::string
 				throw string(err);
 			}
 
