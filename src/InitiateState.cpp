@@ -347,6 +347,14 @@ namespace raidhook
 		lua_pushstring(ourData->L, "url");
 		lua_pushstring(ourData->L, httpItem->url.c_str());
 		lua_settable(ourData->L, -3);
+		lua_pushstring(ourData->L, "set_cookies");
+		lua_newtable(ourData->L);
+		for (size_t i = 0; i < httpItem->setCookies.size(); i++)
+		{
+			lua_pushlstring(ourData->L, httpItem->setCookies[i].c_str(), httpItem->setCookies[i].length());
+			lua_rawseti(ourData->L, -2, static_cast<int>(i) + 1);
+		}
+		lua_settable(ourData->L, -3);
 		lua_pushstring(ourData->L, "headers");
 		lua_newtable(ourData->L);
 		for(std::pair<std::string, std::string> element:httpItem->responseHeaders)
@@ -453,16 +461,185 @@ namespace raidhook
 
 	static int HTTPReqIdent = 0;
 
+	// Reads the options table of dohttpreq (at the absolute stack index idx) into the request. Returns an error message,
+	// which is empty if everything is fine. Does not raise Lua errors, so no C++ objects are skipped by them.
+	static std::string parse_http_options(lua_State* L, int idx, HTTPItem& item)
+	{
+		static const char* const methods[] = {"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"};
+
+		auto has_control_characters = [](const std::string& s)
+		{
+			return s.find_first_of(std::string("\r\n\0", 3)) != std::string::npos;
+		};
+
+		std::string error;
+
+		// A string option. Returns false if it isn't one, true otherwise (also if it's not set)
+		auto read_string = [&](const char* key, std::string& out, bool& present) -> bool
+		{
+			lua_getfield(L, idx, key);
+			present = !lua_isnil(L, -1);
+			bool ok = true;
+			if (present)
+			{
+				if (lua_type(L, -1) == LUA_TSTRING)
+				{
+					size_t len = 0;
+					const char* data = lua_tolstring(L, -1, &len);
+					out.assign(data, len);
+				}
+				else
+				{
+					error = std::string("options.") + key + " has to be a string";
+					ok = false;
+				}
+			}
+			lua_pop(L, 1);
+			return ok;
+		};
+
+		bool present = false;
+
+		std::string method;
+		if (!read_string("method", method, present))
+			return error;
+		if (present)
+		{
+			std::transform(method.begin(), method.end(), method.begin(), [](unsigned char c) { return std::toupper(c); });
+			if (std::find(std::begin(methods), std::end(methods), method) == std::end(methods))
+				return "options.method has to be one of GET, HEAD, POST, PUT, PATCH, DELETE or OPTIONS";
+			item.method = method;
+		}
+
+		if (!read_string("body", item.body, item.hasBody))
+			return error;
+		if (item.hasBody && (item.method == "GET" || item.method == "HEAD" || item.method == "OPTIONS"))
+			return "options.body can't be sent with " + item.method;
+
+		if (!read_string("cookies", item.cookies, present))
+			return error;
+		if (has_control_characters(item.cookies))
+			return "options.cookies must not contain line breaks";
+
+		if (!read_string("cookie_jar", item.cookieJar, present))
+			return error;
+		if (present && (item.cookieJar.empty() || item.cookieJar.size() > 64 ||
+		                item.cookieJar.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-") != std::string::npos))
+			return "options.cookie_jar has to be 1 to 64 letters, digits, '_', '.' or '-'";
+
+		// Either { ["Name"] = "value" } or { "Name: value" } (or both)
+		lua_getfield(L, idx, "headers");
+		if (!lua_isnil(L, -1))
+		{
+			if (!lua_istable(L, -1))
+			{
+				lua_pop(L, 1);
+				return "options.headers has to be a table";
+			}
+
+			const int table = lua_gettop(L);
+			lua_pushnil(L);
+			while (error.empty() && lua_next(L, table))
+			{
+				// key at -2, value at -1. Don't convert the key, that would confuse lua_next
+				std::string line;
+				const int keyType = lua_type(L, -2);
+				const int valueType = lua_type(L, -1);
+				if (valueType != LUA_TSTRING && valueType != LUA_TNUMBER)
+				{
+					error = "options.headers: values have to be strings or numbers";
+				}
+				else if (keyType == LUA_TNUMBER)
+				{
+					line = lua_tostring(L, -1);
+					size_t colon = line.find(':');
+					if (colon == std::string::npos || colon == 0)
+						error = "options.headers: list entries have to look like \"Name: value\"";
+				}
+				else if (keyType == LUA_TSTRING)
+				{
+					const std::string name = lua_tostring(L, -2);
+					if (name.empty() || name.find_first_of(" \t:") != std::string::npos)
+						error = "options.headers: invalid header name '" + name + "'";
+					else
+						line = name + ": " + lua_tostring(L, -1);
+				}
+				else
+				{
+					error = "options.headers: keys have to be strings";
+				}
+
+				if (error.empty() && has_control_characters(line))
+					error = "options.headers must not contain line breaks";
+				if (error.empty())
+					item.requestHeaders.push_back(line);
+
+				lua_pop(L, 1); // the value, the key stays for the next lua_next
+			}
+			if (!error.empty())
+				lua_pop(L, 1); // the key that lua_next left behind
+		}
+		lua_pop(L, 1); // headers
+
+		return error;
+	}
+
+	// dohttpreq(url, callback [, progress_callback] [, options])
+	// options is a table with the optional fields method, headers, body, cookies and cookie_jar, see doc/dohttpreq.md
 	static int luaF_dohttpreq(lua_State* L)
 	{
 		int args = lua_gettop(L);
-		int progressReference = 0;
+		// validate before taking registry references, so a bad call can't leak them
+		luaL_checklstring(L, 1, nullptr);
+		luaL_checktype(L, 2, LUA_TFUNCTION);
+
+		// The third argument is the progress callback or the options, the fourth one the options
+		int progressIndex = 0;
+		int optionsIndex = 0;
 		if (args >= 3)
 		{
-			progressReference = luaL_ref(L, LUA_REGISTRYINDEX);
+			if (lua_istable(L, 3))
+			{
+				optionsIndex = 3;
+			}
+			else if (!lua_isnil(L, 3))
+			{
+				luaL_checktype(L, 3, LUA_TFUNCTION);
+				progressIndex = 3;
+			}
+		}
+		if (args >= 4 && !lua_isnil(L, 4))
+		{
+			luaL_checktype(L, 4, LUA_TTABLE);
+			optionsIndex = 4;
 		}
 
+		std::unique_ptr<HTTPItem> reqItem(new HTTPItem());
+		if (optionsIndex)
+		{
+			// the error is raised after the C++ objects are gone, a Lua error would skip their destructors
+			char message[256] = {};
+			{
+				std::string error = parse_http_options(L, optionsIndex, *reqItem);
+				snprintf(message, sizeof(message), "%s", error.c_str());
+			}
+			if (message[0])
+			{
+				reqItem.reset();
+				return luaL_error(L, "dohttpreq: %s", message);
+			}
+		}
+
+		// The stack is back to what it was, so the progress callback is on top if there is one
+		int progressReference = 0;
+		if (progressIndex)
+		{
+			lua_pushvalue(L, progressIndex);
+			progressReference = luaL_ref(L, LUA_REGISTRYINDEX);
+		}
+		lua_pushvalue(L, 2);
 		int functionReference = luaL_ref(L, LUA_REGISTRYINDEX);
+
 		size_t len;
 		const char* url_c = lua_tolstring(L, 1, &len);
 		std::string url = std::string(url_c, len);
@@ -477,7 +654,6 @@ namespace raidhook
 		HTTPReqIdent++;
 		ourData->requestIdentifier = HTTPReqIdent;
 
-		std::unique_ptr<HTTPItem> reqItem(new HTTPItem());
 		reqItem->call = return_lua_http;
 		reqItem->data = ourData;
 		reqItem->url = url;
@@ -490,6 +666,13 @@ namespace raidhook
 		HTTPManager::GetSingleton()->LaunchHTTPRequest(std::move(reqItem));
 		lua_pushinteger(L, HTTPReqIdent);
 		return 1;
+	}
+
+	// clearhttpcookies(jar): forgets all cookies of a cookie jar, e.g. to log out
+	static int luaF_clearhttpcookies(lua_State* L)
+	{
+		ClearHttpCookies(luaL_checkstring(L, 1));
+		return 0;
 	}
 
 	/*static int luaF_createconsole(lua_State* L) // TODO reenable
@@ -967,6 +1150,8 @@ namespace blt
 
 			lua_pushcclosure(L, luaF_dohttpreq, 0);
 			lua_setfield(L, LUA_GLOBALSINDEX, "dohttpreq");
+			lua_pushcclosure(L, luaF_clearhttpcookies, 0);
+			lua_setfield(L, LUA_GLOBALSINDEX, "clearhttpcookies");
 
 			luaL_Reg consoleLib[] =
 			{
