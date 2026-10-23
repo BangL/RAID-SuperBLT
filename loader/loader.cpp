@@ -2,6 +2,8 @@
 #include "InitState.h"
 #include "util/util.h"
 
+#include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <memory>
 #include <mutex>
@@ -11,18 +13,28 @@
 
 using namespace raidhook;
 
-// Thank you, Raymond Chen
-// https://devblogs.microsoft.com/oldnewthing/20041025-00/?p=37483
-EXTERN_C IMAGE_DOS_HEADER __ImageBase;
-#define HINST_THISCOMPONENT ((HINSTANCE) & __ImageBase)
-
 // Used by the generated assembly file, this contains pointers to every function we have to proxy
-extern "C" ProxyFunctionTable SBLT_PROXY_STRUCT_PTR = CreateInitialProxyFunctionTable();
-extern "C" void SBLT_PROXY_LOADER_FN_CXX(uint64_t functionAndDllId);
+extern "C"
+{
+ProxyFunctionTable SBLT_PROXY_STRUCT_PTR = CreateInitialProxyFunctionTable();
+void SBLT_PROXY_LOADER_FN_CXX(uint64_t functionAndDllId);
+}
 
 static std::mutex dllLoadingMutex;
 static bool isWsockLoaded = false;
 static bool isIphlpapiLoaded = false;
+
+// Whether this DLL set up SuperBLT, as opposed to just proxying the networking functions
+static bool isActive = false;
+
+// Both builds are the same code, only the file name differs. WSOCK32.dll is the one that steps aside if the other
+// build is installed as well (as it always did), since the game imports both DLLs and SuperBLT must only run once.
+static bool IsThisWsock32(HINSTANCE hInst)
+{
+	std::string name = std::filesystem::path(Util::GetModuleFileNameCxx(hInst)).filename().string();
+	std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return std::tolower(c); });
+	return name == "wsock32.dll";
+}
 
 BOOL WINAPI DllMain(HINSTANCE hInst, DWORD reason, LPVOID)
 {
@@ -30,29 +42,27 @@ BOOL WINAPI DllMain(HINSTANCE hInst, DWORD reason, LPVOID)
 	{
 		DisableThreadLibraryCalls(hInst);
 
-		// Check if we're being loaded into PD2 - if not just silently exit.
-		// This is important if we're being loaded via rundll32 during an update.
-		std::string exeFilename = Util::GetModuleFileNameCxx(nullptr);
-		if (!exeFilename.ends_with("PAYDAY2.exe"))
-			return TRUE;
-
 		// Make sure there aren't two copies of SBLT installed
-		if (Util::GetFileType("WSOCK32.dll") == Util::FileType_File &&
-		    Util::GetFileType("IPHLPAPI.dll") == Util::FileType_File)
+		if (IsThisWsock32(hInst) && Util::GetFileType("IPHLPAPI.dll") == Util::FileType_File)
 		{
 			MessageBoxA(nullptr,
 			            "You have both SuperBLT DLLs installed - IPHLPAPI.dll and \nWSOCK32.dll. "
-			            "Please delete one (preferrably, delete IPHLPAPI.dll).",
+			            "Please delete one (preferrably, delete IPHLPAPI.dll). Currently, the WSOCK32.dll loader will\n"
+			            "be deactivated until IPHLPAPI.dll is removed.",
 			            "Both SuperBLT DLLs installed!", MB_OK);
-			ExitProcess(1);
+			return TRUE;
 		}
 
+		isActive = true;
 		InitiateStates();
 	}
 	if (reason == DLL_PROCESS_DETACH)
 	{
+		if (isActive)
+			DestroyStates();
+
 		// It would in principal be nice to unload the networking library, but MSDN forbids FreeLibrary from DllMain.
-		// (it works fine in older versions of SBLT, but there's no real reason to free it anyway)
+		// (and there's no real reason to free it anyway)
 	}
 
 	return TRUE;
@@ -60,7 +70,7 @@ BOOL WINAPI DllMain(HINSTANCE hInst, DWORD reason, LPVOID)
 
 void SBLT_PROXY_LOADER_FN_CXX(uint64_t functionAndDllId)
 {
-	uint32_t functionId = functionAndDllId & 0xFFFFFFFF;
+	[[maybe_unused]] uint32_t functionId = functionAndDllId & 0xFFFFFFFF;
 	uint32_t dllId = functionAndDllId >> 32;
 
 	// Make sure that if multiple threads call the function concurrently, we still only load the DLL once

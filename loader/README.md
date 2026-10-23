@@ -1,8 +1,8 @@
 # DLL Loader system
 
-This is the code responsible for getting SuperBLT into the PAYDAY 2 address space.
+This is the code responsible for getting SuperBLT into the RAID: World War II address space.
 
-The basic idea is that SBLT's DLL has the same name as a DLL that PAYDAY 2 links to - either WSOCK32.dll
+The basic idea is that SBLT's DLL has the same name as a DLL that the game links to - either WSOCK32.dll
 or IPHLPAPI.dll - and due to the order in which Windows searches for DLLs, SBLT will be loaded instead
 of the Microsoft networking DLLs of the same name.
 
@@ -52,3 +52,17 @@ from both DLLs so you should be able to use the same file and just rename it.
 The one catch is that the export ordinals for WSOCK32 and IPHLPAPI overlap, so if you're using the DLL as an IPHLPAPI
 replacement and something imports that DLL using it's ordinal numbers (as opposed to symbol names) then you'll get a
 crash.
+
+## Assembler and build outputs
+
+The stubs are assembly, because they have to jump to the original function without touching the arguments, which C++
+can't do. `generate_asm.py` writes them in one of two dialects, matching the toolchain:
+
+* MSVC: MASM (`loader.asm` and the generated `loader_asm.gen.asm`)
+* MinGW: GNU as in Intel syntax (`loader_gas.S` and the generated `loader_asm.gen.S`)
+
+`loader.asm` and `loader_gas.S` contain the same code, keep them in sync. In both of them, the registers are saved above
+the 32 bytes of shadow space that the called C++ function may overwrite.
+
+Both `WSOCK32.dll` and `IPHLPAPI.dll` are built from the same sources (so they are identical, apart from the file name).
+SuperBLT only runs from one of them: if both are installed, `WSOCK32.dll` steps aside, as it always did.
