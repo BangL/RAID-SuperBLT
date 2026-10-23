@@ -55,22 +55,29 @@ BLTFileDataStore* BLTFileDataStore::Open(std::string filePath)
 
 BLTFileDataStore::~BLTFileDataStore()
 {
-	::close(fd);
+	close();
 }
 
 size_t BLTFileDataStore::read(uint64_t position_in_file, uint8_t* data, size_t length)
 {
-	lseek64(fd, position_in_file, SEEK_SET);
-	size_t count = ::read(fd, data, length);
-	assert(count == length);
+	if (fd == -1)
+		return 0;
 
-	return count;
+	lseek64(fd, position_in_file, SEEK_SET);
+
+	// read returns -1 on errors, which must not turn into a huge count
+	int count = ::read(fd, data, static_cast<unsigned int>(length));
+	return count < 0 ? 0 : static_cast<size_t>(count);
 }
 
 bool BLTFileDataStore::close()
 {
-	RAIDHOOK_LOG_ERROR("BLTAbstractDataStore::close called - unimplemented!");
-	abort();
+	if (fd != -1)
+	{
+		::close(fd);
+		fd = -1;
+	}
+	return true;
 }
 
 size_t BLTFileDataStore::size() const
@@ -86,8 +93,7 @@ bool BLTFileDataStore::is_asynchronous() const
 
 bool BLTFileDataStore::good() const
 {
-	RAIDHOOK_LOG_ERROR("BLTAbstractDataStore::good called - unimplemented!");
-	abort();
+	return fd != -1;
 }
 
 // BLTStringDataStore
@@ -107,7 +113,7 @@ size_t BLTStringDataStore::read(uint64_t position_in_file, uint8_t* data, size_t
 	if (remaining < length)
 		length = remaining;
 
-	memcpy(data, contents.c_str(), length);
+	memcpy(data, contents.data() + position_in_file, length);
 	return length;
 }
 
