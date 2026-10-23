@@ -103,11 +103,6 @@ add_library(SuperBLT STATIC ${sources})
 target_compile_options(SuperBLT PRIVATE
 	-DCURL_STATICLIB
 )
-if(NOT MSVC)
-	# the signature code casts between function and data pointers (MSVC allows it)
-	target_compile_options(SuperBLT PRIVATE -fpermissive)
-endif()
-
 # General optimisation breaks calls to certain lua functions, so replace it.
 # We statically link to reduce dependencies
 foreach(flag_var CMAKE_CXX_FLAGS CMAKE_CXX_FLAGS_DEBUG CMAKE_CXX_FLAGS_RELEASE CMAKE_CXX_FLAGS_MINSIZEREL CMAKE_CXX_FLAGS_RELWITHDEBINFO)

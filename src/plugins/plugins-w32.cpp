@@ -43,19 +43,19 @@ static void * get_func(const char* name)
 
 	if (str == "raid_log")
 	{
-		return &raid_log;
+		return reinterpret_cast<void*>(&raid_log);
 	}
 	else if (str == "is_active_state")
 	{
-		return &is_active_state;
+		return reinterpret_cast<void*>(&is_active_state);
 	}
 	else if (str == "luaL_checkstack")
 	{
-		return &luaL_checkstack;
+		return reinterpret_cast<void*>(&luaL_checkstack);
 	}
 	else if (str == "lua_rawequal")
 	{
-		return &lua_rawequal;
+		return reinterpret_cast<void*>(&lua_rawequal);
 	}
 
 	return blt::platform::win32::get_lua_func(name);
@@ -76,18 +76,30 @@ WindowsPlugin::WindowsPlugin(std::string file) : Plugin(file)
 
 	if (!module) throw string("Failed to load module: ERR") + to_string(GetLastError());
 
-	Init();
+	try
+	{
+		Init();
+	}
+	catch (...)
+	{
+		FreeLibrary(module);
+		throw;
+	}
 
 	// Start loading everything
-	init_func_t init = (init_func_t)GetProcAddress(module, "SuperBLT_Plugin_Setup");
-	if (!init) throw "Invalid module - missing initfunc!";
+	init_func_t init = (init_func_t)(void*)GetProcAddress(module, "SuperBLT_Plugin_Setup");
+	if (!init)
+	{
+		FreeLibrary(module);
+		throw string("Invalid module - missing initfunc!");
+	}
 
 	init(get_func);
 }
 
 void *WindowsPlugin::ResolveSymbol(std::string name) const
 {
-	return GetProcAddress(module, name.c_str());
+	return reinterpret_cast<void*>(GetProcAddress(module, name.c_str()));
 }
 
 Plugin *blt::plugins::CreateNativePlugin(std::string file)
