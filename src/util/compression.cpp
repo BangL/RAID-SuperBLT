@@ -1,179 +1,71 @@
 #include "util.h"
+#include "zip_reader.h"
 
-#include <zlib.h>
-
-#include <algorithm>
-#include <cstdint>
 #include <fstream>
-#include <list>
-#include <memory>
 
 namespace raidhook
 {
 	namespace
 	{
-		const int32_t MagicFileHeader = 0x04034b50;
-
-		typedef std::pair<int32_t, std::string> DataPair_t;
-
-		class ByteStream
+		bool WriteFile(const std::string& extractPath, const std::string& name, const std::string& data)
 		{
-		public:
-			ByteStream(const std::string& path);
-
-			template<typename T>
-			T readType();
-			std::string readString(int length);
-
-		private:
-			std::ifstream mainStream;
-		};
-
-		struct ZIPFileData
-		{
-			std::string filepath;
-			std::string decompressedData;
-			int compressedSize;
-			int uncompressedSize;
-		};
-
-		ByteStream::ByteStream(const std::string& path) : mainStream(path.c_str(), std::ifstream::binary) {}
-
-		template<typename T>
-		T ByteStream::readType()
-		{
-			T read;
-
-			mainStream.read(reinterpret_cast<char *>(&read), sizeof(T));
-			return read;
-		}
-
-		std::string ByteStream::readString(int length)
-		{
-			std::unique_ptr<char[]> readData(new char[length + 1]);
-			mainStream.read(readData.get(), length);
-			return std::string(readData.get(), length);
-		}
-
-		std::string DecompressData(const DataPair_t& compressedData)
-		{
-			z_stream stream;
-			stream.zalloc = Z_NULL;
-			stream.zfree = Z_NULL;
-			stream.opaque = Z_NULL;
-
-			stream.avail_in = 0;
-			stream.next_in = Z_NULL;
-
-			inflateInit2(&stream, -MAX_WBITS);
-
-			stream.avail_in = compressedData.second.size();
-			stream.next_in = reinterpret_cast<unsigned char*>(const_cast<char *>(compressedData.second.data()));
-
-			std::unique_ptr<unsigned char[]> out(new unsigned char[compressedData.first + 1]);
-
-			stream.avail_out = compressedData.first;
-			stream.next_out = out.get();
-
-			inflate(&stream, Z_NO_FLUSH);
-			inflateEnd(&stream);
-
-			return std::string(reinterpret_cast<const char *>(out.get()), compressedData.first);
-		}
-
-		std::unique_ptr<ZIPFileData> ReadFile(ByteStream& mainStream)
-		{
-			auto fileHeader = mainStream.readType<int32_t>();
-			if (fileHeader != MagicFileHeader) return nullptr;
-
-			// version needed
-			mainStream.readType<int16_t>();
-
-			// Ignore 'general purpose bit flag'
-			mainStream.readType<int16_t>();
-
-			auto compressionMethod = mainStream.readType<int16_t>();
-
-			// Ignore modified file times.
-			mainStream.readType<int32_t>();
-
-			// crc32
-			mainStream.readType<int32_t>();
-
-			std::unique_ptr<ZIPFileData> newFile(new ZIPFileData());
-			newFile->compressedSize = mainStream.readType<int32_t>();
-			newFile->uncompressedSize = mainStream.readType<int32_t>();
-
-			auto fileNameLength = mainStream.readType<int16_t>();
-			auto extraFieldLength = mainStream.readType<int16_t>();
-
-			newFile->filepath = mainStream.readString(fileNameLength);
-			std::string extraField = mainStream.readString(extraFieldLength);
-			(void)extraField;
-
-			std::string compressedData = mainStream.readString(newFile->compressedSize);
-
-			switch (compressionMethod)
-			{
-			case 0:
-				newFile->decompressedData = std::move(compressedData);
-				break;
-			case 8: // Deflate
-				newFile->decompressedData = DecompressData(std::make_pair(newFile->uncompressedSize, std::move(compressedData)));
-				break;
-			}
-
-			return newFile;
-		}
-
-		bool WriteFile(const std::string& extractPath, const ZIPFileData& data)
-		{
-			const std::string finalWritePath = extractPath + "/" + data.filepath;
+			const std::string finalWritePath = extractPath + "/" + name;
 			Util::EnsurePathWritable(finalWritePath);
 
-			// There doesn't seem to be a better way to detect if the "file" in question is a directory.
-			char trailingChar = finalWritePath.at(finalWritePath.size()-1);
-			if(trailingChar == '/' || trailingChar == '\\')
+			std::ofstream outFile(finalWritePath.c_str(), std::ios::binary);
+			if (!outFile)
 			{
-				// Ignore directories; They are created automatically when a file is written inside them.
-				return true;
+				RAIDHOOK_LOG_WARN(std::string("Failed to extract file: ") + finalWritePath);
+				return false;
 			}
-			else
+
+			outFile.write(data.data(), static_cast<std::streamsize>(data.size()));
+			outFile.close();
+			if (!outFile)
 			{
-				std::ofstream outFile(finalWritePath.c_str(), std::ios::binary);
-				if (!outFile)
-				{
-
-					RAIDHOOK_LOG_WARN(std::string("Failed to extract file: ") + finalWritePath);
-
-					return false;
-				}
-
-				outFile.write(data.decompressedData.data(), data.uncompressedSize);
-				return true;
+				RAIDHOOK_LOG_WARN(std::string("Failed to write file: ") + finalWritePath);
+				return false;
 			}
+			return true;
 		}
 	}
 
 	bool ExtractZIPArchive(const std::string& path, const std::string& extractPath)
 	{
-		ByteStream mainStream(path);
-
-		std::list<std::unique_ptr<ZIPFileData>> files;
+		zip::Archive archive(path);
+		std::string error;
+		if (!archive.Open(error))
 		{
-			std::unique_ptr<ZIPFileData> file;
-			while ((file = ReadFile(mainStream)))
+			RAIDHOOK_LOG_WARN(std::string("Cannot extract ") + path + ": " + error);
+			return false;
+		}
+
+		// Check every entry before writing anything, so a bad archive doesn't leave a half-extracted mod
+		for (const zip::EntryInfo& entry : archive.Entries())
+		{
+			if (!zip::IsSafeEntryPath(entry.name))
 			{
-				files.push_back(std::move(file));
+				RAIDHOOK_LOG_WARN(std::string("Refusing to extract unsafe path: ") + entry.name);
+				return false;
 			}
 		}
 
 		RAIDHOOK_LOG_LOG(std::string("Extracting ") + path + std::string(" to ") + extractPath);
 		bool result = true;
-		std::for_each(files.cbegin(), files.cend(), [extractPath, &result](const std::unique_ptr<ZIPFileData>& data)
+		for (const zip::EntryInfo& entry : archive.Entries())
 		{
-			result &= WriteFile(extractPath, *data);
-		});
+			// Directories are created automatically when a file is written inside them
+			if (entry.IsDirectory())
+				continue;
+
+			std::string data;
+			if (!archive.ReadEntry(entry, data, error))
+			{
+				RAIDHOOK_LOG_WARN(std::string("Cannot extract ") + path + ": " + error);
+				return false;
+			}
+			result &= WriteFile(extractPath, entry.name, data);
+		}
 		return result;
 	}
 }
