@@ -1,4 +1,5 @@
-cmake_minimum_required(VERSION 3.18)
+# 3.28 because of SafetyHook
+cmake_minimum_required(VERSION 3.28)
 
 project(SuperBLT CXX C)
 
@@ -63,9 +64,13 @@ target_include_directories(wren PRIVATE lib/wren/src/optional lib/wren/src/vm)
 target_compile_options(wren PRIVATE -D_CRT_SECURE_NO_WARNINGS)
 target_include_directories(wren PUBLIC lib/wren/src/include)
 
-add_library(subhook STATIC lib/subhook/subhook.c)
-target_compile_options(subhook PRIVATE -DSUBHOOK_EXPORT=;)
-target_include_directories(subhook PUBLIC lib/subhook)
+# safetyhook pulls Zydis through CPM, point it at the bundled submodule
+set(CPM_Zydis_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/lib/zydis" CACHE PATH "" FORCE)
+set(ZYDIS_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(ZYDIS_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+set(ZYDIS_BUILD_DOXYGEN OFF CACHE BOOL "" FORCE)
+set(ZYDIS_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+add_subdirectory(lib/safetyhook EXCLUDE_FROM_ALL)
 
 ###############################################################################
 ## Wren source generation #####################################################
@@ -97,7 +102,6 @@ add_library(SuperBLT STATIC ${sources})
 
 target_compile_options(SuperBLT PRIVATE
 	-DCURL_STATICLIB
-	-DSUBHOOK_STATIC
 )
 if(NOT MSVC)
 	# the signature code casts between function and data pointers (MSVC allows it)
@@ -137,7 +141,7 @@ target_include_directories(SuperBLT PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/gen)
 
 target_link_libraries(SuperBLT mxml)
 target_link_libraries(SuperBLT wren)
-target_link_libraries(SuperBLT subhook)
+target_link_libraries(SuperBLT safetyhook)
 
 # Build libs as static
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build libs as static, set by SBLT's buildscript")

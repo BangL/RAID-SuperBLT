@@ -4,6 +4,7 @@
 #include "lua.h"
 
 #include "platform.h"
+#include "hook_util.h"
 #include "lua_functions.h"
 
 #include "util/util.h"
@@ -885,7 +886,7 @@ namespace blt
 			{
 				// Debug isn't available, use normal call
 				lua_remove(L, -1);
-				return lua_call_exe(L, args, returns);
+				return luaCallDetour.call<void>(L, args, returns);
 			}
 			lua_getfield(L, -1, "traceback");
 			lua_remove(L, -2);

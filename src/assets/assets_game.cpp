@@ -2,7 +2,7 @@
 #include "dbutil/Datastore.h"
 
 #include "platform.h"
-#include "subhook.h"
+#include "hook_util.h"
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -39,20 +39,20 @@ static_assert(sizeof(PDString) == 32 + sizeof(std::string), "PDString is the wro
 // The signature is the same for all try_open methods, so one typedef will work for all of them.
 typedef void(__thiscall* try_open_t)(void* this_, void* archive, blt::idstring* type, blt::idstring* name, unsigned long long u1, unsigned long long u2);
 
-static void hook_load(try_open_t orig, subhook::Hook& hook, void* this_, void* archive, blt::idstring* type, blt::idstring* name, unsigned long long u1, unsigned long long u2);
+static void hook_load(safetyhook::InlineHook& hook, void* this_, void* archive, blt::idstring* type, blt::idstring* name, unsigned long long u1, unsigned long long u2);
 
 #define DECLARE_PASSTHROUGH(func)                                                                                                                 \
-	static subhook::Hook hook_##func;                                                                                                               \
+	SBLT_DECLARE_HOOK(hook_##func);                                                                                                       \
 	void stub_##func(void* this_, void* archive, blt::idstring* type, blt::idstring* name, unsigned long long u1, unsigned long long u2) \
 	{                                                                                                                                               \
-		hook_load((try_open_t)func, hook_##func, this_, archive, type, name, u1, u2);                                                                 \
+		hook_load(hook_##func, this_, archive, type, name, u1, u2);                                                                 \
 	}
 
 #define DECLARE_PASSTHROUGH_ARRAY(id)                                                                                                           \
-	static subhook::Hook hook_##id;                                                                                                               \
+	SBLT_DECLARE_HOOK(hook_##id);                                                                                                       \
 	void stub_##id(void* this_, void* archive, blt::idstring* type, blt::idstring* name, unsigned long long u1, unsigned long long u2) \
 	{                                                                                                                                             \
-		hook_load((try_open_t)try_open_functions.at(id), hook_##id, this_, archive, type, name, u1, u2);                                            \
+		hook_load(hook_##id, this_, archive, type, name, u1, u2);                                            \
 	}
 
 // Approximate structure from IDA, zero idea how accurate it is, but we've got the important ones here.
@@ -96,7 +96,7 @@ static void* Archive_ctor(Archive* archive, PDString* pd_name, BLTAbstractDataSt
 	return archive;
 }
 
-static void hook_load(try_open_t orig, subhook::Hook& hook, void* this_, void* archive, blt::idstring* type, blt::idstring* name, unsigned long long u1, unsigned long long u2)
+static void hook_load(safetyhook::InlineHook& hook, void* this_, void* archive, blt::idstring* type, blt::idstring* name, unsigned long long u1, unsigned long long u2)
 {
 	// Try hooking this asset, and see if we need to handle it differently
 	BLTAbstractDataStore* datastore = nullptr;
@@ -113,12 +113,7 @@ static void hook_load(try_open_t orig, subhook::Hook& hook, void* this_, void* a
 		return;
 	}
 
-	if (*name == 185182019423013513u) {
-		printf("camera stuff");
-	}
-
-	subhook::ScopedHookRemove scoped_remove(&hook);
-	orig(this_, archive, type, name, u1, u2);
+	hook.call<void>(this_, archive, type, name, u1, u2);
 
 	// Read the probably_not_loaded_flag to see if this archive failed to load - if so try again but also
 	// look for hooks with the fallback bit set
@@ -135,5 +130,3 @@ static void hook_load(try_open_t orig, subhook::Hook& hook, void* this_, void* a
 }
 
 static void setup_extra_asset_hooks() {}
-
-#define HOOK_OPTION subhook::HookOptions::HookOption64BitOffset

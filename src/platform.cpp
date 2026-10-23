@@ -3,6 +3,7 @@
 #include "console/console.h"
 #include "signatures/signatures.h"
 #include "assets/assets.h"
+#include "hook_util.h"
 #include <util/util.h>
 
 #include <fstream>
@@ -142,11 +143,11 @@ void * blt::platform::win32::get_lua_func(const char* name)
 	return SignatureSearch::GetFunctionByName(name);
 }
 
-subhook::Hook luaCallDetour;
+safetyhook::InlineHook& luaCallDetour = *new safetyhook::InlineHook();
 
 bool blt::platform::lua::GetForcePCalls()
 {
-	return luaCallDetour.IsInstalled();
+	return static_cast<bool>(luaCallDetour);
 }
 
 void blt::platform::lua::SetForcePCalls(bool state)
@@ -156,12 +157,12 @@ void blt::platform::lua::SetForcePCalls(bool state)
 
 	if (state)
 	{
-		luaCallDetour.Install(lua_call_exe, blt::lua_functions::perform_lua_pcall);
-		RAIDHOOK_LOG_LOG("blt.forcepcalls(): Protected calls will now be forced");
+		if (blt::hooks::install(luaCallDetour, lua_call_exe, blt::lua_functions::perform_lua_pcall, "lua_call"))
+			RAIDHOOK_LOG_LOG("blt.forcepcalls(): Protected calls will now be forced");
 	}
 	else
 	{
-		luaCallDetour.Remove();
+		luaCallDetour.reset();
 		RAIDHOOK_LOG_LOG("blt.forcepcalls(): Protected calls are no longer being forced");
 	}
 }
