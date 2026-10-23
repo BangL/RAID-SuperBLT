@@ -30,9 +30,10 @@ static uint64_t monotonicTimeMicros()
     QueryPerformanceFrequency(&Frequency);
     QueryPerformanceCounter(&StartingTime);
 
-    StartingTime.QuadPart *= 1000000;
-    StartingTime.QuadPart /= Frequency.QuadPart;
-    return StartingTime.QuadPart;
+    // The counter runs from boot, multiplying it first overflows after a few days of uptime
+    const uint64_t counter   = StartingTime.QuadPart;
+    const uint64_t frequency = Frequency.QuadPart;
+    return (counter / frequency) * 1000000 + (counter % frequency) * 1000000 / frequency;
 }
 
 #pragma pack(1)
@@ -129,7 +130,7 @@ std::vector<uint8_t> DslFile::ReadContents(std::istream& fi) const
     if (bundle->ChunkOffsets.empty())
     {
         fi.seekg(offset, std::ios::beg);
-        std::vector<uint8_t> data(length);
+        std::vector<uint8_t> data(realLength);
         fi.read((char*)data.data(), data.size());
 
         uint32_t dstSize = *reinterpret_cast<uint32_t*>(data.data() + (data.size() - sizeof(uint32_t)));
@@ -165,8 +166,13 @@ std::vector<uint8_t> DslFile::ReadContents(std::istream& fi) const
             fi.seekg(fileOffset, std::ios::beg);
             fi.read((char*)&compressedLength, sizeof(compressedLength));
 
+            if (!fi || compressedLength < sizeof(uint32_t))
+                throw std::runtime_error("invalid chunk header");
+
             std::vector<uint8_t> compressedData(compressedLength);
             fi.read((char*)compressedData.data(), compressedData.size());
+            if (!fi)
+                throw std::runtime_error("failed to read chunk");
 
             uint32_t dstSize = *reinterpret_cast<uint32_t*>(compressedData.data() + (compressedData.size() - sizeof(uint32_t)));
             data.resize(dstSize);
@@ -401,7 +407,7 @@ static void loadPackageHeader(DieselBundle* bundle, const std::string& headerPat
         throw std::runtime_error("Failed to decompress package header");
 
     // if BlockSize != 0 then there are more vector blocks in this file
-    uint32_t blockSize = *reinterpret_cast<uint32_t*>(dstData.data());
+    [[maybe_unused]] uint32_t blockSize = *reinterpret_cast<uint32_t*>(dstData.data());
 
     // Files
     struct FilePos
@@ -428,7 +434,8 @@ static void loadPackageHeader(DieselBundle* bundle, const std::string& headerPat
 
             if (i > 0)
             {
-                const auto& prevFile = files[i - 1];
+                // Entries that share their offset (e.g. language variants) also share the length
+                const auto& prevFile = positions[i - 1];
                 DslFile*    prev     = &files.at(prevFile.fileId - 1);
 
                 if (file.offset == prevFile.offset)
@@ -501,7 +508,6 @@ static void loadBundleHeader(DieselBundle* dieselBundle, const std::string& head
     static_assert(sizeof(ItemInfo) == 12); // True on 32/64 bit
 
     BundleInfo bundle = *reinterpret_cast<BundleInfo*>(dstData.data() + sizeof(uint32_t));
-    size_t     offset = sizeof(uint32_t) + sizeof(BundleInfo);
 
     assert(bundle.zero == 0);
     assert(bundle.one == 1);
