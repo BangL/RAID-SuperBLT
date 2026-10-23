@@ -60,10 +60,12 @@ static void lua_close_new(lua_State* L)
 	luaCloseDetour.call<void>(L);
 }
 
-static void node_from_xml_new(void* node, char* data, int* len)
+// The length is a 64-bit value in the engine (it reads it as a qword to find the end of the text). With a 4-byte int
+// the upper half is whatever lies next to it on the stack, which a GCC build does not keep zero.
+static void node_from_xml_new(void* node, char* data, size_t* len)
 {
-	char* modded = raidhook::tweaker::tweak_raid_xml(data, *len);
-	int modLen = *len;
+	char* modded = raidhook::tweaker::tweak_raid_xml(data, static_cast<int>(*len));
+	size_t modLen = *len;
 
 	if (modded != data)
 	{
