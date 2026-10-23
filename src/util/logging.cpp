@@ -5,7 +5,10 @@
 #include <fstream>
 #include <iostream>
 
+#include <chrono>
+#include <cstdlib>
 #include <mutex>
+#include <thread>
 
 namespace raidhook
 {
@@ -70,9 +73,10 @@ namespace raidhook
 
 			typedef decltype(&quick_endl) LineTerminator_t;
 
-			std::mutex& GetLoggerMutex()
+			// Timed, so the exit handler can give up instead of waiting for a thread that was already killed
+			std::timed_mutex& GetLoggerMutex()
 			{
-				static std::mutex loggerMutex;
+				static std::timed_mutex loggerMutex;
 				return loggerMutex;
 			}
 
@@ -94,8 +98,13 @@ namespace raidhook
 
 				void log(const Message_t& msg);
 
+				// Writes buffered lines to disk if there are any
+				void flushIfDirty();
+				void flushAtExit();
+
 			private:
 				bool mIsOpen = false;
+				bool mDirty = false;
 
 				LineTerminator_t mEndl = quick_endl;
 				std::string mFilename;
@@ -110,7 +119,30 @@ namespace raidhook
 
 			void LoggerImpl::flush()
 			{
-				mOut << std::endl;
+				std::lock_guard<std::timed_mutex> lock(GetLoggerMutex());
+				mOut.flush();
+				mDirty = false;
+			}
+
+			void LoggerImpl::flushIfDirty()
+			{
+				std::lock_guard<std::timed_mutex> lock(GetLoggerMutex());
+				if (mDirty)
+				{
+					mOut.flush();
+					mDirty = false;
+				}
+			}
+
+			void LoggerImpl::flushAtExit()
+			{
+				// Other threads are probably gone by now, don't hang if one of them died holding the lock
+				std::unique_lock<std::timed_mutex> lock(GetLoggerMutex(), std::defer_lock);
+				if (lock.try_lock_for(std::chrono::milliseconds(200)) && mIsOpen)
+				{
+					mOut.flush();
+					mDirty = false;
+				}
 			}
 
 			LoggerImpl::LoggerImpl(std::string&& file)
@@ -126,7 +158,7 @@ namespace raidhook
 					return;
 				}
 
-				std::lock_guard<std::mutex> lock(GetLoggerMutex());
+				std::lock_guard<std::timed_mutex> lock(GetLoggerMutex());
 				mOut.close();
 				mOut = std::ofstream(file.c_str(), std::ios::app);
 				mFilename = std::move(file);
@@ -135,7 +167,7 @@ namespace raidhook
 
 			void LoggerImpl::close()
 			{
-				std::lock_guard<std::mutex> lock(GetLoggerMutex());
+				std::lock_guard<std::timed_mutex> lock(GetLoggerMutex());
 				if (!mIsOpen)
 				{
 					return;
@@ -148,7 +180,7 @@ namespace raidhook
 
 			void LoggerImpl::log(const Message_t& msg)
 			{
-				std::lock_guard<std::mutex> lock(GetLoggerMutex());
+				std::lock_guard<std::timed_mutex> lock(GetLoggerMutex());
 
 				std::cout << msg << mEndl;
 
@@ -158,13 +190,33 @@ namespace raidhook
 				}
 
 				mOut << msg << mEndl;
+
+				// With quick_endl nothing reaches the disk by itself, the flush thread takes care of that
+				mDirty = true;
 			}
 		}
 
 		Logger& Logger::Instance()
 		{
-			static LoggerImpl logger("mods/logs/" + GetDateString() + "_log.txt");
-			return logger;
+			// Never destroyed: the flush thread keeps using it, and static destructors run at a point where
+			// other threads may already be gone. The exit handler below takes over the final flush.
+			static LoggerImpl* logger = []() {
+				auto* impl = new LoggerImpl("mods/logs/" + GetDateString() + "_log.txt");
+
+				// Lines are only flushed on warnings and errors, so without this the end of the log would be
+				// lost on a crash. A short delay costs next to nothing, unlike flushing every line.
+				std::thread([impl]() {
+					while (true)
+					{
+						std::this_thread::sleep_for(std::chrono::milliseconds(250));
+						impl->flushIfDirty();
+					}
+				}).detach();
+
+				std::atexit([]() { static_cast<LoggerImpl&>(Logger::Instance()).flushAtExit(); });
+				return impl;
+			}();
+			return *logger;
 		}
 
 		void Logger::Close()
