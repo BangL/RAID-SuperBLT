@@ -130,6 +130,9 @@ if(NOT MSVC)
 	# no mingw runtime DLLs next to the game, link them statically
 	set(CMAKE_SHARED_LIBRARY_PREFIX "")
 	target_link_options(SuperBLT PUBLIC -static -static-libgcc -static-libstdc++)
+	# drop unused code and strip debug info (it makes up most of the DLL size) in release builds
+	target_compile_options(SuperBLT PRIVATE -ffunction-sections -fdata-sections)
+	target_link_options(SuperBLT PUBLIC -Wl,--gc-sections $<$<CONFIG:Release,MinSizeRel>:-s>)
 endif()
 
 # Make the generated wren header available
@@ -336,6 +339,6 @@ else()
 endif()
 target_link_libraries(SBLT_DLL_UPDATER psl zlib-ng libcurl_static)
 if(NOT MSVC)
-	target_link_options(SBLT_DLL_UPDATER PRIVATE -static -static-libgcc -static-libstdc++)
+	target_link_options(SBLT_DLL_UPDATER PRIVATE -static -static-libgcc -static-libstdc++ -Wl,--gc-sections $<$<CONFIG:Release,MinSizeRel>:-s>)
 endif()
 target_include_directories(SBLT_DLL_UPDATER PRIVATE updater)
