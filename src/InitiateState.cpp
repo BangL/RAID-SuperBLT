@@ -118,7 +118,7 @@ namespace raidhook
 	static int luaH_getcontents(lua_State* L, bool files)
 	{
 		size_t len;
-		const char* dirc = lua_tolstring(L, 1, &len);
+		const char* dirc = luaL_checklstring(L, 1, &len);
 		std::string dir(dirc, len);
 		std::vector<std::string> directories;
 
@@ -163,7 +163,7 @@ namespace raidhook
 	static int luaF_directoryExists(lua_State* L)
 	{
 		size_t len;
-		const char* dirc = lua_tolstring(L, 1, &len);
+		const char* dirc = luaL_checklstring(L, 1, &len);
 		bool doesExist = Util::DirectoryExists(dirc);
 		lua_pushboolean(L, doesExist);
 		return 1;
@@ -172,7 +172,7 @@ namespace raidhook
 	static int luaF_fileExists(lua_State* L)
 	{
 		size_t len;
-		const char* dirc = lua_tolstring(L, 1, &len);
+		const char* dirc = luaL_checklstring(L, 1, &len);
 		bool doesExist = Util::GetFileType(dirc) == Util::FileType_File;
 		lua_pushboolean(L, doesExist);
 		return 1;
@@ -181,8 +181,8 @@ namespace raidhook
 	static int luaF_unzipfile(lua_State* L)
 	{
 		size_t len;
-		const char* archivePath = lua_tolstring(L, 1, &len);
-		const char* extractPath = lua_tolstring(L, 2, &len);
+		const char* archivePath = luaL_checklstring(L, 1, &len);
+		const char* extractPath = luaL_checklstring(L, 2, &len);
 
 		bool retVal = raidhook::ExtractZIPArchive(archivePath, extractPath);
 		lua_pushboolean(L, retVal);
@@ -192,7 +192,7 @@ namespace raidhook
 	static int luaF_removeDirectory(lua_State* L)
 	{
 		size_t len;
-		const char* directory = lua_tolstring(L, 1, &len);
+		const char* directory = luaL_checklstring(L, 1, &len);
 		bool success = Util::RemoveEmptyDirectory(directory);
 		lua_pushboolean(L, success);
 		return 1;
@@ -262,7 +262,7 @@ namespace raidhook
 	static int luaF_dofile(lua_State* L)
 	{
 		size_t length = 0;
-		const char* filename = lua_tolstring(L, 1, &length);
+		const char* filename = luaL_checklstring(L, 1, &length);
 		int error = luaL_loadfilex(L, filename, nullptr);
 		if (error != 0)
 		{
@@ -409,7 +409,7 @@ namespace raidhook
 	static int luaF_directoryhash(lua_State* L)
 	{
 		size_t length = 0;
-		const char* filename = lua_tolstring(L, 1, &length);
+		const char* filename = luaL_checklstring(L, 1, &length);
 
 		Util::FileType type = Util::GetFileType(filename);
 		if (Util::GetFileType(filename) != Util::FileType_Directory)
@@ -436,7 +436,7 @@ namespace raidhook
 	static int luaF_filehash(lua_State* L)
 	{
 		size_t l = 0;
-		const char * filename = lua_tolstring(L, 1, &l);
+		const char * filename = luaL_checklstring(L, 1, &l);
 
 		Util::FileType type = Util::GetFileType(filename);
 		if (Util::GetFileType(filename) != Util::FileType_File)
@@ -716,9 +716,9 @@ namespace raidhook
 	static int luaF_moveDirectory(lua_State* L)
 	{
 		size_t lf = 0;
-		const char * fromStr = lua_tolstring(L, 1, &lf);
+		const char * fromStr = luaL_checklstring(L, 1, &lf);
 		size_t ld = 0;
-		const char * destStr = lua_tolstring(L, 2, &ld);
+		const char * destStr = luaL_checklstring(L, 2, &ld);
 
 		bool success = Util::MoveDirectory(fromStr, destStr);
 		lua_pushboolean(L, success);
@@ -727,7 +727,7 @@ namespace raidhook
 
 	static int luaF_createDirectory(lua_State* L)
 	{
-		const char *path = lua_tostring(L, 1);
+		const char *path = luaL_checkstring(L, 1);
 		bool success = Util::CreateDirectorySingle(path);
 		lua_pushboolean(L, success);
 		return 1;
@@ -778,7 +778,7 @@ namespace raidhook
 
 	static int luaF_parsexml(lua_State* L)
 	{
-		const char *xml = lua_tostring(L, 1);
+		const char *xml = luaL_checkstring(L, 1);
 
 		mxmlSetErrorCallback(handle_mxml_error);
 
@@ -878,7 +878,7 @@ namespace raidhook
 
 	static int luaF_load_native(lua_State* L)
 	{
-		std::string file(lua_tostring(L, 1));
+		std::string file(luaL_checkstring(L, 1));
 
 		try
 		{
@@ -988,7 +988,7 @@ namespace raidhook
 	static int luaF_sd_identify(lua_State* L)
 	{
 		size_t len;
-		const char *data = lua_tolstring(L, 1, &len);
+		const char *data = luaL_checklstring(L, 1, &len);
 
 		bool is32bit = raidhook::scriptdata::determine_is_32bit(len, (const uint8_t*)data);
 
@@ -1003,7 +1003,7 @@ namespace raidhook
 	static int luaF_sd_recode(lua_State* L)
 	{
 		size_t len;
-		const char *data = lua_tolstring(L, 1, &len);
+		const char *data = luaL_checklstring(L, 1, &len);
 
 		if(lua_type(L, 2) != LUA_TTABLE)
 		{
@@ -1127,9 +1127,9 @@ namespace blt
 
 				if (!Util::DirectoryExists("mods/base/wren"))
 				{
-					int result = MessageBox(NULL, "It appears you have a vanilla BLT basemod. This is incompatible with SuperBLT.\n"
-					                         "Please delete your 'mods/base' folder, and run the game again to automatically download a compatible version",
-					                         "BLT basemod outdated", MB_OK);
+					MessageBox(NULL, "It appears you have a vanilla BLT basemod. This is incompatible with SuperBLT.\n"
+					           "Please delete your 'mods/base' folder, and run the game again to automatically download a compatible version",
+					           "BLT basemod outdated", MB_OK);
 
 					exit(1);
 					return;
