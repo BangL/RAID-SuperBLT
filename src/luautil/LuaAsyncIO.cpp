@@ -72,7 +72,9 @@ static void invoke_on_update(lua_State* L, std::function<void()> func)
 				snprintf(buff, sizeof(buff) - 1, "Lua stack size deviation for async invoke_on_update: %d vs %d\n",
 			             old_top, new_top);
 				RAIDHOOK_LOG_ERROR(buff);
-				abort();
+
+				// Restore the stack instead of killing the game over a leaked or missing value
+				lua_settop(completion.L, old_top);
 			}
 		},
 		completion);
@@ -96,7 +98,11 @@ static void start_task_thread()
 				std::unique_lock lock(task_mutex);
 				bool has_item = condition_var.wait_for(lock, timeout, []() { return !task_list.empty(); });
 				if (!has_item)
+				{
+					// Leave under the same lock, so dispatch_task never sees a thread that is about to exit
+					thread_count--;
 					break;
+				}
 				task = std::move(task_list.front());
 				task_list.pop();
 			}
@@ -106,11 +112,6 @@ static void start_task_thread()
 		}
 
 		RAIDHOOK_LOG_LOG("Exiting async IO thread");
-
-		{
-			std::lock_guard guard(task_mutex);
-			thread_count--;
-		}
 	});
 	thread.detach();
 }
@@ -172,7 +173,8 @@ static int aio_read(lua_State* L)
 			success = false;
 		}
 
-		invoke_on_update(L, [L, func_ref{completion_func_ref}, &data, success, err{errno}]() {
+		// The completion runs later on the main thread, so it has to own the data
+		invoke_on_update(L, [L, func_ref{completion_func_ref}, data{std::move(data)}, success, err{errno}]() mutable {
 			lua_rawgeti(L, LUA_REGISTRYINDEX, func_ref);
 			if (success)
 			{
