@@ -8,6 +8,7 @@
 #include <format>
 #include <iostream>
 #include <filesystem>
+#include <algorithm>
 
 #include "compression.h"
 
@@ -24,6 +25,9 @@ static const char *VERSION_URL_DLL_IPHLPAPI = "https://api.modworkshop.net/mods/
 
 static const int UPDATER_VERSION = 2;
 
+// The default timeout (10 s) is only meant for the version checks, downloads may take a lot longer
+static const long DOWNLOAD_TIMEOUT = 300L;
+
 static size_t write_data(void *ptr, size_t size, size_t nmemb, void *stream)
 {
 	size_t written = fwrite(ptr, size, nmemb, (FILE *)stream);
@@ -35,6 +39,14 @@ size_t write_data_stream(char *ptr, size_t size, size_t nmemb, void *userdata) {
     size_t count = size * nmemb;
     stream->write(ptr, count);
     return count;
+}
+
+// A site outage or error page must not be mistaken for a version number
+static bool IsHttpSuccess(CURL *curl)
+{
+	long responseCode = 0;
+	curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &responseCode);
+	return responseCode >= 200 && responseCode < 300;
 }
 
 int main(int argc, char *argv[])
@@ -111,7 +123,7 @@ int main(int argc, char *argv[])
 	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data_stream);
 	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &selfupdate_rver);
 	CURLcode res4 = curl_easy_perform(curl);
-	if (res4 != CURLE_OK)
+	if (res4 != CURLE_OK or !IsHttpSuccess(curl))
 	{
 		curl_easy_cleanup(curl);
 		return 2;
@@ -138,6 +150,7 @@ int main(int argc, char *argv[])
 	{
 		// download new updater
 		curl_easy_setopt(curl, CURLOPT_URL, DOWNLOAD_URL_DLL_UPDATER);
+		curl_easy_setopt(curl, CURLOPT_TIMEOUT, DOWNLOAD_TIMEOUT);
 		FILE *pagefile2 = NULL;
 		errno_t err2 = fopen_s(&pagefile2, UPDATER_FILE, "wb");
 		if (err2 != 0)
@@ -155,6 +168,16 @@ int main(int argc, char *argv[])
 
 		fclose(pagefile2);
 
+		// don't touch the running updater unless the download worked
+		if (res3 != CURLE_OK)
+		{
+			printf("\nError downloading SBLT DLL updater with error %d\nERR: %s\n", res3, errbuf);
+			std::filesystem::remove(UPDATER_FILE);
+			curl_easy_cleanup(curl);
+			MessageBox(0, "An error occured.", "SBLT DLL Downloader", MB_OK);
+			return 2;
+		}
+
 		// rename current updater
 		if (std::filesystem::exists("SBLT_DLL_UPDATER.exe"))
 		{
@@ -162,10 +185,21 @@ int main(int argc, char *argv[])
 		}
 
 		// DLL: unpack new dll
-		raidhook::ExtractZIPArchive(UPDATER_FILE, ".");
+		bool updater_extracted = raidhook::ExtractZIPArchive(UPDATER_FILE, ".");
 		// DLL: clean up
 		std::filesystem::remove(UPDATER_FILE);
 		curl_easy_cleanup(curl);
+
+		if (!updater_extracted)
+		{
+			// put the old updater back, so there is still one next time
+			if (!std::filesystem::exists("SBLT_DLL_UPDATER.exe") && std::filesystem::exists("SBLT_DLL_UPDATER.exe.old"))
+			{
+				std::filesystem::rename("SBLT_DLL_UPDATER.exe.old", "SBLT_DLL_UPDATER.exe");
+			}
+			MessageBox(0, "Failed to unpack the new SBLT DLL Updater.", "SBLT DLL Downloader", MB_OK);
+			return 2;
+		}
 
 		// DLL: tell user to restart game
 		MessageBox(0, "SuperBLT DLL Updater was updated successfully.\nPlease restart your game.", "SuperBLT DLL Updater", MB_OK);
@@ -190,7 +224,7 @@ int main(int argc, char *argv[])
 	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &datastream);
 
 	CURLcode res = curl_easy_perform(curl);
-	if (res != CURLE_OK)
+	if (res != CURLE_OK or !IsHttpSuccess(curl))
 	{
 		curl_easy_cleanup(curl);
 		return 2;
@@ -218,28 +252,14 @@ int main(int argc, char *argv[])
 	int rVerMin = 0;
 	int rVerPatch = 0;
 	int rVerRev = 0;
-	bool newer = false;
-
 	// DLL: parse version strings into ints
 	sscanf(local_version.c_str(), "%d.%d.%d.%d", &lVerMaj, &lVerMin, &lVerPatch, &lVerRev);
 	sscanf(remote_version.c_str(), "%d.%d.%d.%d", &rVerMaj, &rVerMin, &rVerPatch, &rVerRev);
 
-	if (rVerMaj > lVerMaj)
-	{
-		newer = true;
-	}
-	if (rVerMin > lVerMin and newer == false)
-	{
-		newer = true;
-	}
-	if (rVerPatch > lVerPatch and newer == false)
-	{
-		newer = true;
-	}
-	if (rVerRev > lVerRev and newer == false)
-	{
-		newer = true;
-	}
+	// DLL: the remote version is newer if it is lexicographically greater
+	const int local_ver[4] = {lVerMaj, lVerMin, lVerPatch, lVerRev};
+	const int remote_ver[4] = {rVerMaj, rVerMin, rVerPatch, rVerRev};
+	bool newer = std::lexicographical_compare(local_ver, local_ver + 4, remote_ver, remote_ver + 4);
 
 	// DLL: download new dll
 	if (newer == true)
@@ -274,6 +294,7 @@ int main(int argc, char *argv[])
 
 		curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data);
 		curl_easy_setopt(curl, CURLOPT_WRITEDATA, pagefile);
+		curl_easy_setopt(curl, CURLOPT_TIMEOUT, DOWNLOAD_TIMEOUT);
 		CURLcode res2 = curl_easy_perform(curl);
 
 		fclose(pagefile);
@@ -286,10 +307,16 @@ int main(int argc, char *argv[])
 		}
 
 		// DLL: unpack new dll
-		raidhook::ExtractZIPArchive(DLL_UPDATE_FILE, ".");
+		bool dll_extracted = raidhook::ExtractZIPArchive(DLL_UPDATE_FILE, ".");
 		// DLL: clean up
 		std::filesystem::remove(DLL_UPDATE_FILE);
 		curl_easy_cleanup(curl);
+
+		if (!dll_extracted)
+		{
+			MessageBox(0, "Failed to unpack the new SBLT DLL.", "SBLT DLL Downloader", MB_OK);
+			return 2;
+		}
 
 		// DLL: tell user to restart game
 		MessageBox(0, "SuperBLT DLL was updated successfully.\nPlease restart your game.", "SuperBLT DLL Updater", MB_OK);
