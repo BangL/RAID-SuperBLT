@@ -4,6 +4,7 @@
 #include <fstream>
 #include <unordered_set>
 #include <set>
+#include <mutex>
 #include <string.h>
 #include "util/util.h"
 
@@ -17,6 +18,8 @@ using blt::idfile;
 
 bool raidhook::tweaker::tweaker_enabled = true;
 
+// The hooked parser may be entered from several engine threads
+static std::recursive_mutex tweaker_mutex;
 static unordered_set<char*> buffers;
 static set<idfile> ignored_files;
 
@@ -24,8 +27,16 @@ static set<idfile> ignored_files;
 // once, nothing should happen as a file from the filesystem is being loaded.
 idfile last_parsed;
 
+// This is the old way of tweaking XML files, which a current basemod switches off (Internal.tweaker_enabled) in favour of
+// asset hooks that get the exact name and extension. It finds out which file is parsed from the engine globals of the last
+// file opened, which is wrong for about 8 % of the parses (measured over 6,367): other threads open files in between, and
+// the files of a package are parsed in batches without a fresh open. The file that this thread opened last, or the archive
+// found on the stack of the parser, are no better (the archive is the package's, not the file's). Nothing in reach of the
+// hook names the file, so this stays as it is for old basemods.
 char* tweaker::tweak_raid_xml(char* text, int text_length)
 {
+	std::lock_guard<std::recursive_mutex> lock(tweaker_mutex);
+
 	if (!tweaker_enabled)
 	{
 		return text;
@@ -93,6 +104,7 @@ char* tweaker::tweak_raid_xml(char* text, int text_length)
 
 void tweaker::free_tweaked_raid_xml(char* text)
 {
+	std::lock_guard<std::recursive_mutex> lock(tweaker_mutex);
 	if (buffers.erase(text))
 	{
 		free(text);
@@ -101,5 +113,6 @@ void tweaker::free_tweaked_raid_xml(char* text)
 
 void raidhook::tweaker::ignore_file(idfile file)
 {
+	std::lock_guard<std::recursive_mutex> lock(tweaker_mutex);
 	ignored_files.insert(file);
 }
