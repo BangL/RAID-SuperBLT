@@ -8,7 +8,6 @@
 #include <iostream>
 #include <map>
 #include <tlhelp32.h>
-#include "subhook.h"
 
 #define SIG_INCLUDE_MAIN
 #define INCLUDE_TRY_OPEN_FUNCTIONS
@@ -38,8 +37,8 @@ class SignatureCacheDB
 #define READ_BIN(var) infile.read((char*)&var, sizeof(var));
 
 		uint32_t revision;
-		READ_BIN(revision); // TODO if the file is EOF, exit
-		if (revision != CACHEDB_REVISION)
+		READ_BIN(revision);
+		if (!infile.good() || revision != CACHEDB_REVISION)
 		{
 			// Using a differnt revision, can't safely use it.
 			// Not a big deal, just search properly for signatures this time.
@@ -48,13 +47,18 @@ class SignatureCacheDB
 		}
 
 		uint32_t count;
-		READ_BIN(count); // TODO if the file is EOF, exit
+		READ_BIN(count);
+		if (!infile.good())
+		{
+			RAIDHOOK_LOG_WARN("Discarding signature cache data, file is truncated");
+			return;
+		}
 
 		for (size_t i = 0; i < count; i++)
 		{
 			uint32_t length;
 			READ_BIN(length);
-			if (length > BUFF_LEN)
+			if (!infile.good() || length > BUFF_LEN)
 			{
 				RAIDHOOK_LOG_ERROR("Cannot read long signature name!");
 				locations.clear();
@@ -63,10 +67,22 @@ class SignatureCacheDB
 
 			char name[BUFF_LEN];
 			infile.read(name, length);
+			if (!infile.good())
+			{
+				RAIDHOOK_LOG_WARN("Discarding signature cache data, file is truncated");
+				locations.clear();
+				return;
+			}
 			string name_str = string(name, length);
 
 			size_t address;
 			READ_BIN(address);
+			if (!infile.good())
+			{
+				RAIDHOOK_LOG_WARN("Discarding signature cache data, file is truncated");
+				locations.clear();
+				return;
+			}
 
 			locations[name_str] = address;
 		}
@@ -90,9 +106,8 @@ class SignatureCacheDB
 	{
 		if (name.length() > BUFF_LEN)
 		{
-			string msg = "Cannot write long signature name!";
-			RAIDHOOK_LOG_ERROR(msg);
-			throw msg;
+			RAIDHOOK_LOG_ERROR("Cannot write long signature name!");
+			return;
 		}
 		locations[name] = address;
 	}
@@ -174,14 +189,22 @@ static bool CheckSignature(const char* pattern, size_t patternLength, const char
 static size_t FindPattern(char* module, const char* funcname, const char* pattern, const char* mask, size_t hint,
                    bool* hintCorrect, size_t* hintOut)
 {
-	*hintOut = NULL;
+	*hintOut = 0;
 
 	MODULEINFO mInfo = GetModuleInfo(module);
 	size_t base = (size_t)mInfo.lpBaseOfDll;
 	size_t size = (size_t)mInfo.SizeOfImage;
 	size_t patternLength = (size_t)strlen(mask);
 
-	if (hint >= 0 && hint < size - patternLength)
+	// Module not found (size == 0) or smaller than the pattern, size - patternLength would underflow
+	if (base == 0 || size <= patternLength)
+	{
+		RAIDHOOK_LOG_WARN(string("Failed to locate function ") + string(funcname) + string(": module not found"));
+		*hintCorrect = false;
+		return 0;
+	}
+
+	if (hint < size - patternLength)
 	{
 		size_t result;
 		*hintCorrect = CheckSignature(pattern, patternLength, mask, base, size, hint, &result);
@@ -210,7 +233,7 @@ static size_t FindPattern(char* module, const char* funcname, const char* patter
 					string err = string("Found duplicate signature for ") + string(funcname) + string(" at ") +
 								 to_string(result) + string(",") + to_string(addr);
 					RAIDHOOK_LOG_WARN(err);
-					hintOut = NULL; // Don't cache sigs with errors
+					*hintOut = 0; // Don't cache sigs with errors
 				}
 			}
 #endif
@@ -221,7 +244,7 @@ static size_t FindPattern(char* module, const char* funcname, const char* patter
 		}
 	}
 	RAIDHOOK_LOG_WARN(string("Failed to locate function ") + string(funcname));
-	return NULL;
+	return 0;
 }
 
 static bool FindAssetLoadSignatures(const char* module, SignatureCacheDB& cache, int* cache_misses)
@@ -238,7 +261,7 @@ static bool FindAssetLoadSignatures(const char* module, SignatureCacheDB& cache,
 		"\x6C\x24\xE9\x48\x81\xEC\xE0\x00\x00\x00\x49";
 	const char* mask = "xxxxxxxxxxxxxxxxxxxxxxxxxxxx";
 	// There should be three copies of this function
-	int target_count = 3;
+	size_t target_count = 3;
 
 	MODULEINFO mInfo = GetModuleInfo(module);
 	size_t base = (size_t)mInfo.lpBaseOfDll;
@@ -247,11 +270,17 @@ static bool FindAssetLoadSignatures(const char* module, SignatureCacheDB& cache,
 
 	std::vector<void*>& results = try_open_functions;
 
+	if (base == 0 || size <= patternLength)
+	{
+		RAIDHOOK_LOG_WARN("Failed to locate asset loading functions: module not found");
+		return false;
+	}
+
 	// Implement caching - if all the signatures are at the same place, assume it's still working
-	int cache_count = cache.GetAddress("asset_load_signatures_count");
+	size_t cache_count = cache.GetAddress("asset_load_signatures_count");
 	if (cache_count == target_count)
 	{
-		for (int i = 0; i < cache_count; i++)
+		for (size_t i = 0; i < cache_count; i++)
 		{
 			size_t target = cache.GetAddress("asset_load_signatures_id_" + to_string(i));
 
@@ -303,11 +332,11 @@ static bool FindAssetLoadSignatures(const char* module, SignatureCacheDB& cache,
 
 	cache.UpdateAddress("asset_load_signatures_count", results.size());
 
-	if (target_count < results.size())
+	if (target_count > results.size())
 	{
 		RAIDHOOK_LOG_WARN(string("Failed to locate enough instances of the asset loading function:"));
 	}
-	else if (target_count > results.size())
+	else if (target_count < results.size())
 	{
 		RAIDHOOK_LOG_WARN(string("Located too many instances of the asset loading function:"));
 	}
@@ -366,18 +395,18 @@ bool SignatureSearch::Search()
 		size_t hint = cache.GetAddress(funcname);
 
 		bool hintCorrect;
-		size_t hintOut = NULL;
-		size_t addr =
-			(FindPattern(filename, it->funcname, it->signature, it->mask, hint, &hintCorrect, &hintOut) + it->offset);
+		size_t hintOut = 0;
+		size_t found = FindPattern(filename, it->funcname, it->signature, it->mask, hint, &hintCorrect, &hintOut);
+		size_t addr = found ? found + it->offset : 0;
 		*((void**)it->address) = (void*)addr;
 
-		if (addr == NULL)
+		if (addr == 0)
 		{
 			hintCorrect = true; // If the signature doesn't exist at all, it's not the cache's fault
 			if (!hasError)
 				hasError = true;
 		}
-		else if (hint == -1 && addr != NULL)
+		else if (hint == static_cast<size_t>(-1) && addr != 0)
 		{
 			RAIDHOOK_LOG_LOG(string("Sigcache hit failed for function ") + funcname);
 		}
@@ -387,7 +416,7 @@ bool SignatureSearch::Search()
 			                 to_string(hintOut) + ")!");
 		}
 
-		if (!hintCorrect && hintOut != NULL)
+		if (!hintCorrect && hintOut != 0)
 		{
 			cache.UpdateAddress(funcname, hintOut);
 			cacheMisses++;
