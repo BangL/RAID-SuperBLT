@@ -266,9 +266,13 @@ set(ZLIB_BUILD_SHARED OFF CACHE BOOL "" FORCE)
 
 add_subdirectory(lib/sys/zlib EXCLUDE_FROM_ALL)
 
-# Link to the expected CURL-compatible zlib target
-set(ZLIB_LIBRARY zlib-ng CACHE INTERNAL "")
-set(ZLIB_INCLUDE_DIR ${zlib_SOURCE_DIR} CACHE INTERNAL "")
+# curl finds zlib through the imported target ZLIB::ZLIB, so offer it zlib-ng under that name. The generated zlib.h is in
+# the binary directory of zlib-ng.
+if(NOT TARGET ZLIB::ZLIB)
+	add_library(ZLIB::ZLIB ALIAS zlib-ng)
+endif()
+set(ZLIB_LIBRARY zlib-ng CACHE STRING "" FORCE)
+set(ZLIB_INCLUDE_DIR "${CMAKE_CURRENT_BINARY_DIR}/lib/sys/zlib" CACHE PATH "" FORCE)
 target_link_libraries(SuperBLT zlib-ng)
 
 
@@ -280,18 +284,28 @@ set(CURL_USE_SCHANNEL ON CACHE BOOL "" FORCE)
 
 # Turn off all the crap we don't want
 set(CURL_DISABLE_INSTALL ON CACHE BOOL "" FORCE)
-set(HTTP_ONLY ON CACHE BOOL "" FORCE) # disable all protocols, but http(s) and ws(s)
+set(CURL_ENABLE_EXPORT_TARGET OFF CACHE BOOL "" FORCE) # zlib-ng is not part of an export set
+# Only http(s) and ftp(s) are wanted. curl dropped HTTP_ONLY, so every other protocol is switched off one by one
+foreach(protocol DICT FILE GOPHER IMAP LDAP LDAPS MQTT POP3 RTSP SMTP TELNET TFTP)
+	set(CURL_DISABLE_${protocol} ON CACHE BOOL "" FORCE)
+endforeach()
+# This was switched off before, and the cache of an older build directory still says so
+set(CURL_DISABLE_FTP OFF CACHE BOOL "" FORCE)
+# libpsl (built above) is what curl's cookie engine checks cookie domains against
+set(CURL_USE_LIBPSL ON CACHE BOOL "" FORCE)
+# Multipart form data is only needed for uploads, we only download
+set(CURL_DISABLE_MIME ON CACHE BOOL "" FORCE)
+set(CURL_DISABLE_FORM_API ON CACHE BOOL "" FORCE)
 set(ENABLE_UNIX_SOCKETS OFF CACHE BOOL "" FORCE) # disable unix-socket support [ http(s):// ]
 set(CURL_DISABLE_NEGOTIATE_AUTH ON CACHE BOOL "" FORCE) # included in SSPI
 set(CURL_DISABLE_KERBEROS_AUTH ON CACHE BOOL "" FORCE) # included in SSPI
-set(CURL_DISABLE_NTLM ON CACHE BOOL "" FORCE) # included in SSPI
+# NTLM is off by default (CURL_ENABLE_NTLM)
 set(CURL_DISABLE_WEBSOCKETS ON CACHE BOOL "" FORCE) # disable websocket support [ ws(s):// ]
 
-# link curl against our included static zlib, to enable it's libz features
-set(CURL_ZLIB OFF CACHE BOOL "" FORCE)        # prevent it from trying to find system zlib
-set(CMAKE_DISABLE_FIND_PACKAGE_ZLIB ON CACHE BOOL "" FORCE)  # disable external find
-set(ZLIB_LIBRARY zlib-ng CACHE STRING "" FORCE)
-set(ZLIB_INCLUDE_DIR ${zlib_SOURCE_DIR} CACHE PATH "" FORCE)
+# link curl against our included static zlib (ZLIB::ZLIB, see above), to enable Content-Encoding gzip and deflate
+set(CURL_ZLIB ON CACHE STRING "" FORCE)
+# older build directories still have the switch that used to block the zlib search
+unset(CMAKE_DISABLE_FIND_PACKAGE_ZLIB CACHE)
 
 add_subdirectory(lib/sys/curl EXCLUDE_FROM_ALL)
 
