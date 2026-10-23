@@ -202,10 +202,16 @@ static int wren_lua_invoke(lua_State* L)
 		auto lock = raidhook::wren::lock_wren_vm();
 		WrenVM* vm = raidhook::wren::get_wren_vm();
 
+		// No Lua error in here: it could leave the lock above held forever
+		WrenHandle* res = nullptr;
 		if (!vm)
-			luaL_error(L, "Wren runtime unavailable - check for Wren-related errors in the log");
+		{
+			snprintf(run_err_str, sizeof(run_err_str) - 1, "Wren runtime unavailable - check for Wren-related errors in the log");
+			run_success = false;
+			goto done;
+		}
 
-		WrenHandle* res = wrenMakeCallHandle(vm, func_name.c_str());
+		res = wrenMakeCallHandle(vm, func_name.c_str());
 
 		wrenEnsureSlots(vm, 1 + arg_count);
 		wrenSetSlotHandle(vm, 0, handle);
@@ -222,7 +228,7 @@ static int wren_lua_invoke(lua_State* L)
 				break;
 			default:
 				snprintf(run_err_str, sizeof(run_err_str) - 1, "Bad arg %d: invalid type %s", i + 1,
-				         lua_typename(L, lua_idx));
+				         lua_typename(L, lua_type(L, lua_idx)));
 				run_success = false;
 				goto done;
 			}
@@ -240,7 +246,8 @@ static int wren_lua_invoke(lua_State* L)
 		}
 
 	done:
-		wrenReleaseHandle(vm, res);
+		if (res)
+			wrenReleaseHandle(vm, res);
 	}
 
 	if (!run_success)

@@ -17,6 +17,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <shared_mutex>
 #include <string>
 
 using blt::db::DieselDB;
@@ -107,6 +108,8 @@ class DBAssetHook
 	static void finalise(void* this_data);
 };
 
+// Hooks get registered from Wren while the engine looks files up from its loading threads
+static std::shared_mutex overriddenFilesMutex;
 static std::map<blt::idfile, std::shared_ptr<DBTargetFile>> overriddenFiles;
 
 WrenForeignMethodFn raidhook::tweaker::dbhook::bind_dbhook_method(WrenVM* vm, const char* module,
@@ -194,7 +197,7 @@ WrenForeignClassMethods raidhook::tweaker::dbhook::bind_dbhook_class([[maybe_unu
 	return {nullptr, nullptr};
 }
 
-static blt::idstring parseHash(std::string value)
+static bool parseHash(const std::string& value, blt::idstring& out, std::string& error)
 {
 	if (value.size() == 17 && value.at(0) == '@')
 	{
@@ -203,48 +206,61 @@ static blt::idstring parseHash(std::string value)
 		blt::idstring id = strtoull(value.c_str() + 1, &endPtr, 16);
 		if (errno)
 		{
-			char buff[1024];
-			memset(buff, 0, sizeof(buff));
-			snprintf(buff, sizeof(buff) - 1, "[wren] Invalid hash value '%s': Parse errno %d %s", value.c_str(), errno,
-			         strerror(errno));
-			RAIDHOOK_LOG_ERROR(buff);
-			abort();
+			error = "[wren] Invalid hash value '" + value + "': Parse errno " + std::to_string(errno) + " " + strerror(errno);
+			return false;
 		}
 		if (endPtr != value.c_str() + 17)
 		{
-			char buff[1024];
-			memset(buff, 0, sizeof(buff));
-			snprintf(buff, sizeof(buff) - 1, "[wren] Invalid hash value '%s': Not a valid ID literal", value.c_str());
-			RAIDHOOK_LOG_ERROR(buff);
-			abort();
+			error = "[wren] Invalid hash value '" + value + "': Not a valid ID literal";
+			return false;
 		}
-		return id;
+		out = id;
+		return true;
 	}
 
-	return blt::idstring_hash(value);
+	out = blt::idstring_hash(value);
+	return true;
+}
+
+// Reads the name and extension from slots 1 and 2. A bad value aborts the Wren fiber (with the reason as the error) and
+// returns false, the caller has to return right away.
+static bool getAssetId(WrenVM* vm, blt::idstring& name, blt::idstring& ext)
+{
+	std::string error;
+	if (!parseHash(wrenGetSlotString(vm, 1), name, error) || !parseHash(wrenGetSlotString(vm, 2), ext, error))
+	{
+		RAIDHOOK_LOG_ERROR(error);
+		wrenSetSlotString(vm, 0, error.c_str());
+		wrenAbortFiber(vm, 0);
+		return false;
+	}
+	return true;
 }
 
 static void wrenRegisterAssetHook(WrenVM* vm)
 {
-	blt::idstring name = parseHash(wrenGetSlotString(vm, 1));
-	blt::idstring ext = parseHash(wrenGetSlotString(vm, 2));
+	blt::idstring name, ext;
+	if (!getAssetId(vm, name, ext))
+		return;
 
 	blt::idfile file(name, ext);
 
+	std::unique_lock registration_lock(overriddenFilesMutex);
 	if (overriddenFiles.count(file))
 	{
 		const char* name_str = wrenGetSlotString(vm, 1);
 		const char* ext_str = wrenGetSlotString(vm, 2);
 
-		char buff[1024];
-		memset(buff, 0, sizeof(buff));
-		snprintf(buff, sizeof(buff) - 1, "[wren] Duplicate asset registration for %s.%s", name_str, ext_str);
-		RAIDHOOK_LOG_ERROR(buff);
-		abort();
+		std::string msg = std::string("[wren] Duplicate asset registration for ") + name_str + "." + ext_str;
+		RAIDHOOK_LOG_ERROR(msg);
+		wrenSetSlotString(vm, 0, msg.c_str());
+		wrenAbortFiber(vm, 0);
+		return;
 	}
 
 	auto entry = std::make_shared<DBTargetFile>(file);
 	overriddenFiles[file] = entry;
+	registration_lock.unlock();
 
 	wrenGetVariable(vm, MODULE, "DBAssetHook", 0);
 	auto* hook = (DBAssetHook*)wrenSetSlotNewForeign(vm, 0, 0, sizeof(DBAssetHook));
@@ -254,8 +270,9 @@ static void wrenRegisterAssetHook(WrenVM* vm)
 
 static void wrenLoadAssetContents(WrenVM* vm)
 {
-	blt::idstring name = parseHash(wrenGetSlotString(vm, 1));
-	blt::idstring ext = parseHash(wrenGetSlotString(vm, 2));
+	blt::idstring name, ext;
+	if (!getAssetId(vm, name, ext))
+		return;
 
 	DslFile* file = DieselDB::Instance()->Find(name, ext);
 
@@ -306,6 +323,13 @@ static void wrenLoadAssetContents(WrenVM* vm)
 		wrenSetSlotString(vm, 0, msg.c_str());
 		wrenAbortFiber(vm, 0);
 	}
+	catch (const std::exception& ex)
+	{
+		// e.g. a bundle chunk that doesn't decompress. An exception must not unwind through the Wren VM.
+		std::string msg = std::string("Failed to read asset: ") + ex.what();
+		wrenSetSlotString(vm, 0, msg.c_str());
+		wrenAbortFiber(vm, 0);
+	}
 }
 
 bool raidhook::tweaker::dbhook::hook_asset_load(const blt::idfile& asset_file, BLTAbstractDataStore** out_datastore,
@@ -317,13 +341,19 @@ bool raidhook::tweaker::dbhook::hook_asset_load(const blt::idfile& asset_file, B
 	*out_pos = 0;
 	*out_len = 0;
 
-	auto filePtr = overriddenFiles.find(asset_file);
+	std::shared_ptr<DBTargetFile> target_ptr;
+	{
+		std::shared_lock lock(overriddenFilesMutex);
+		auto filePtr = overriddenFiles.find(asset_file);
 
-	// If the file isn't defined, we're not overriding anything
-	if (filePtr == overriddenFiles.end())
-		return false;
+		// If the file isn't defined, we're not overriding anything
+		if (filePtr == overriddenFiles.end())
+			return false;
 
-	DBTargetFile& target = *filePtr->second;
+		target_ptr = filePtr->second;
+	}
+
+	DBTargetFile& target = *target_ptr;
 
 	// If this target is in fallback mode (it'll only load if the base game doesn't provide such a file), and
 	// we haven't yet tried loading the base game's version of the file, then stop here.
@@ -334,8 +364,11 @@ bool raidhook::tweaker::dbhook::hook_asset_load(const blt::idfile& asset_file, B
 
 	// TODO write to out_name somewhere
 
+	// A hooked asset that can't be provided is reported and then loaded from the game as if it wasn't hooked,
+	// instead of killing the process.
+
 	// Define these loading functions here, as we can use them either directly or after calling Wren
-	auto load_file = [&](const std::string& filename) {
+	auto load_file = [&](const std::string& filename) -> bool {
 		BLTFileDataStore* ds = BLTFileDataStore::Open(filename);
 
 		if (!ds)
@@ -345,17 +378,15 @@ bool raidhook::tweaker::dbhook::hook_asset_load(const blt::idfile& asset_file, B
 			snprintf(buff, sizeof(buff) - 1, "Failed to open hooked file '%s' while loading " IDPFP, filename.c_str(),
 			         asset_file.name, asset_file.ext);
 			RAIDHOOK_LOG_ERROR(buff);
-
-			MessageBox(nullptr, "Failed to load hooked file - file not found. See log for more information.",
-			           "Wren Error", MB_OK);
-			ExitProcess(1);
+			return false;
 		}
 
 		*out_datastore = ds;
 		*out_len = ds->size();
+		return true;
 	};
 
-	auto load_bundle_item = [&](blt::idfile bundle_item) {
+	auto load_bundle_item = [&](blt::idfile bundle_item) -> bool {
 		DslFile* file = DieselDB::Instance()->Find(bundle_item.name, bundle_item.ext);
 
 		// Abort if the file isn't found - most likely this would lead to a crash anyway since the RAID version
@@ -368,10 +399,7 @@ bool raidhook::tweaker::dbhook::hook_asset_load(const blt::idfile& asset_file, B
 			snprintf(buff, sizeof(buff) - 1, "Failed to open hooked asset file " IDPFP " while loading " IDPFP,
 			         bundle_item.name, bundle_item.ext, asset_file.name, asset_file.ext);
 			RAIDHOOK_LOG_ERROR(buff);
-
-			MessageBox(nullptr, "Failed to load hooked asset - file not found. See log for more information.",
-			           "Wren Error", MB_OK);
-			ExitProcess(1);
+			return false;
 		}
 
 		BLTAbstractDataStore* ds = DieselDB::Instance()->Open(file->bundle);
@@ -383,15 +411,16 @@ bool raidhook::tweaker::dbhook::hook_asset_load(const blt::idfile& asset_file, B
 			*out_len = file->length;
 		else
 			*out_len = ds->size() - file->offset;
+		return true;
 	};
 
 	if (target.plain_file)
 	{
-		load_file(target.plain_file.value());
+		return load_file(target.plain_file.value());
 	}
 	else if (!target.direct_bundle.is_empty())
 	{
-		load_bundle_item(target.direct_bundle);
+		return load_bundle_item(target.direct_bundle);
 	}
 	else if (target.wren_loader_obj)
 	{
@@ -424,9 +453,7 @@ bool raidhook::tweaker::dbhook::hook_asset_load(const blt::idfile& asset_file, B
 			snprintf(buff, sizeof(buff) - 1, "Wren asset load failed for " IDPFP ": compile or runtime error!",
 			         asset_file.name, asset_file.ext);
 			RAIDHOOK_LOG_ERROR(buff);
-
-			MessageBox(nullptr, "Failed to load Wren-based asset - see the log for details", "Wren Error", MB_OK);
-			ExitProcess(1);
+			return false;
 		}
 
 		// Get the wrapper, and make sure it's valid
@@ -439,18 +466,17 @@ bool raidhook::tweaker::dbhook::hook_asset_load(const blt::idfile& asset_file, B
 			         "Wren load_file function return invalid class or null - for asset " IDPFP " ptr %p",
 			         asset_file.name, asset_file.ext, ff);
 			RAIDHOOK_LOG_ERROR(buff);
-			MessageBox(nullptr, "Failed to load Wren-based asset - see the log for details", "Wren Error", MB_OK);
-			ExitProcess(1);
+			return false;
 		}
 
 		// Now load it's value
 		if (ff->filename)
 		{
-			load_file(*ff->filename);
+			return load_file(*ff->filename);
 		}
 		else if (!ff->asset.is_empty())
 		{
-			load_bundle_item(ff->asset);
+			return load_bundle_item(ff->asset);
 		}
 		else if (ff->stringLiteral)
 		{
@@ -462,8 +488,7 @@ bool raidhook::tweaker::dbhook::hook_asset_load(const blt::idfile& asset_file, B
 		{
 			// Should never happen
 			RAIDHOOK_LOG_ERROR("No output contents set for DBForeignFile");
-			MessageBox(nullptr, "Failed to load Wren-based asset - see the log for details", "Wren Error", MB_OK);
-			ExitProcess(1);
+			return false;
 		}
 	}
 	else
@@ -487,8 +512,9 @@ void DBForeignFile::ofFile(WrenVM* vm)
 
 void DBForeignFile::ofAsset(WrenVM* vm)
 {
-	blt::idstring name = parseHash(wrenGetSlotString(vm, 1));
-	blt::idstring ext = parseHash(wrenGetSlotString(vm, 2));
+	blt::idstring name, ext;
+	if (!getAssetId(vm, name, ext))
+		return;
 	create(vm)->asset = blt::idfile(name, ext);
 }
 
@@ -602,8 +628,9 @@ void DBAssetHook::setDirectBundle(WrenVM* vm)
 	auto* it = get_this(vm);
 	it->clear_sources();
 
-	blt::idstring name = parseHash(wrenGetSlotString(vm, 1));
-	blt::idstring ext = parseHash(wrenGetSlotString(vm, 2));
+	blt::idstring name, ext;
+	if (!getAssetId(vm, name, ext))
+		return;
 
 	it->direct_bundle = blt::idfile(name, ext);
 }

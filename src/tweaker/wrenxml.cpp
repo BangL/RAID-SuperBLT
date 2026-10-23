@@ -24,6 +24,7 @@ const char *MODULE = "base/native";
 WXMLNode *name = *(WXMLNode**)wrenGetSlotForeign(vm, slot); \
 if(name->root == NULL) { \
 	WXML_ERR("Cannot use closed Wren XML Instance"); \
+	return; \
 }
 
 #define THIS_WXML_NODE(vm) \
@@ -89,7 +90,7 @@ static void handle_mxml_error_crash(const char* error)
 {
 	RAIDHOOK_LOG_ERROR("Could not parse XML: Error and original file below");
 	RAIDHOOK_LOG_ERROR(error);
-	RAIDHOOK_LOG_ERROR(last_loaded_xml);
+	RAIDHOOK_LOG_ERROR((last_loaded_xml ? last_loaded_xml : "(unknown)"));
 
 	const char *message = "[WREN/WXML] XML parse error - see mods/logs for details";
 	MessageBox(0, message, "XML Parse Error", MB_OK);
@@ -264,17 +265,22 @@ static void allocateXML(WrenVM* vm)
 static void finalizeXML(void* data)
 {
 	WXMLNode *wxml = *(WXMLNode**)data;
-	wxml->Release();
+	if (wxml)
+		wxml->Release();
 }
 
 static void XMLtry_parse(WrenVM* vm)
 {
 	mxmlSetErrorCallback(handle_mxml_error_note);
-	WXMLNode *wxml = attemptParseString(vm);
+	attemptParseString(vm);
 
 	if (mxml_last_error)
 	{
-		finalizeXML(wxml);
+		// Let go of the node of the failed document. The foreign object lives on until the garbage collector gets to
+		// it, so it must not release the node a second time.
+		WXMLNode **foreign = (WXMLNode**)wrenGetSlotForeign(vm, 0);
+		(*foreign)->Release();
+		*foreign = nullptr;
 		wrenSetSlotNull(vm, 0);
 
 		free(mxml_last_error);
@@ -291,7 +297,11 @@ static void XMLNode_delete(WrenVM* vm)
 
 static WXMLNode* XMLNode_create(WrenVM *vm, WXMLDocument *root, mxml_node_t *xnode, int slot)
 {
-	if (xnode == NULL) WXML_ERR("Cannot create null XML Node");
+	if (xnode == NULL)
+	{
+		WXML_ERR("Cannot create null XML Node");
+		return nullptr;
+	}
 
 	wrenGetVariable(vm, MODULE, "XML", slot);
 
@@ -310,8 +320,10 @@ static void XMLNode_type(WrenVM* vm)
 }
 
 #define XMLNODE_REQUIRE_TYPE(type, name) \
-if (mxmlGetType(handle) != type) \
-WXML_ERR("Can only perform ." #name " on " #type " nodes - ID:" + to_string(mxmlGetType(handle)));
+if (mxmlGetType(handle) != type) { \
+	WXML_ERR("Can only perform ." #name " on " #type " nodes - ID:" + to_string(mxmlGetType(handle))); \
+	return; \
+}
 
 static void XMLNode_text(WrenVM* vm)
 {
@@ -448,6 +460,14 @@ static void XMLNode_attach(WrenVM* vm, int where, mxml_node_t *child)
 	if (mxmlGetParent(new_child->handle) != NULL)
 	{
 		WXML_ERR("Cannot attach a node that already has a parent");
+		return;
+	}
+
+	// The root of the same document would become its own child, and the merge below would free its own document
+	if (new_child->root == wxml->root)
+	{
+		WXML_ERR("Cannot attach a node to its own document");
+		return;
 	}
 
 	WXMLDocument *old_root = new_child->root;

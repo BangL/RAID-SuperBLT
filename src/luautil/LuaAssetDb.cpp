@@ -24,7 +24,7 @@ static idstring to_idstring(lua_State* L, int idx, const char* err_name = nullpt
     {
         if (lua_type(L, idx) != LUA_TSTRING)
         {
-            luaL_error(L, "Invalid type '%s' to SBLT DB function opt '%s' - needed string", lua_typename(L, idx), err_name);
+            luaL_error(L, "Invalid type '%s' to SBLT DB function opt '%s' - needed string", lua_typename(L, lua_type(L, idx)), err_name);
         }
         str = lua_tostring(L, idx);
     }
@@ -118,11 +118,13 @@ static int ldb_load(lua_State* L)
 
         char msg[1024];
         snprintf(msg, sizeof(msg) - 1, "AssetDB: could not load asset " IDPFP " - not found in database", name, ext);
-        luaL_error(L, msg);
+        luaL_error(L, "%s", msg);
         return 0; // Placate CLion's null warning thing, luaL_error never returns
     }
 
     errno = 0;
+    // The error is raised outside of the try block, so no exception is in flight when Lua unwinds
+    char error[256] = {};
     try
     {
         if (file->bundle == nullptr)
@@ -139,11 +141,18 @@ static int ldb_load(lua_State* L)
         lua_pushlstring(L, (const char*)data.data(), data.size());
         return 1;
     }
-    catch (const std::ios::failure& ex)
+    catch (const std::ios::failure&)
     {
-        luaL_error(L, "Failed to read bundle: io error: %s", strerror(errno));
-        return 0; // Will never happen, luaL_error does not return
+        snprintf(error, sizeof(error), "io error: %s", strerror(errno));
     }
+    catch (const std::exception& ex)
+    {
+        // e.g. a chunk that doesn't decompress
+        snprintf(error, sizeof(error), "%s", ex.what());
+    }
+
+    luaL_error(L, "Failed to read bundle: %s", error);
+    return 0; // Will never happen, luaL_error does not return
 }
 
 static int ldb_has(lua_State* L)
