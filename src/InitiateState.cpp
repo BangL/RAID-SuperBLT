@@ -103,10 +103,13 @@ namespace raidhook
 	static void handled_pcall(lua_State* L, int nargs, int nresults)
 	{
 		int err = lua_pcall(L, nargs, nresults, 0);
-		if (err == LUA_ERRRUN)
+		if (err != 0)
 		{
 			size_t len;
-			RAIDHOOK_LOG_LOG(lua_tolstring(L, -1, &len));
+			const char* message = lua_tolstring(L, -1, &len);
+			if (message) RAIDHOOK_LOG_LOG(message);
+			// the error message stays on the stack otherwise
+			lua_pop(L, 1);
 		}
 	}
 
@@ -392,7 +395,7 @@ namespace raidhook
 		lua_settable(ourData->L, -3);
 		handled_pcall(ourData->L, 3, 0);
 		luaL_unref(ourData->L, LUA_REGISTRYINDEX, ourData->funcRef);
-		luaL_unref(ourData->L, LUA_REGISTRYINDEX, ourData->progressRef);
+		if (ourData->progressRef != 0) luaL_unref(ourData->L, LUA_REGISTRYINDEX, ourData->progressRef);
 		delete ourData;
 	}
 
@@ -410,7 +413,7 @@ namespace raidhook
 		lua_pushinteger(ourData->L, ourData->requestIdentifier);
 		lua_pushinteger(ourData->L, progress);
 		lua_pushinteger(ourData->L, total);
-		lua_pcall(ourData->L, 3, 0, 0);
+		handled_pcall(ourData->L, 3, 0);
 	}
 
 	static void call_hash_result(lua_State* L, int ref, std::string filename, std::string result)
@@ -782,7 +785,9 @@ namespace raidhook
 		int i = 1;
 		while (child != NULL)
 		{
-			if (strncmp(mxmlGetElement(child), "!--", 3) != 0)
+			const char *element = mxmlGetElement(child);
+			// text and other nodes that are no elements have no name
+			if (element && strncmp(element, "!--", 3) != 0)
 			{
 				build_xml_tree(L, child);
 				lua_rawseti(L, -2, i++);
@@ -792,10 +797,10 @@ namespace raidhook
 		}
 	}
 
-	static const char* mxml_last_error = NULL;
+	static std::string mxml_last_error;
 	static void handle_mxml_error(const char* error)
 	{
-		mxml_last_error = error;
+		mxml_last_error = error ? error : "unknown error";
 	}
 
 	static int luaF_parsexml(lua_State* L)
@@ -806,13 +811,14 @@ namespace raidhook
 
 		mxml_node_t *tree = mxmlLoadString(NULL, xml, MXML_IGNORE_CALLBACK);
 
-		if (mxml_last_error)
+		if (!mxml_last_error.empty())
 		{
 			RAIDHOOK_LOG_ERROR("Could not parse XML: Error and original file below");
 			RAIDHOOK_LOG_ERROR(mxml_last_error);
 			RAIDHOOK_LOG_ERROR(xml);
 
-			mxml_last_error = NULL;
+			mxml_last_error.clear();
+			if (tree) mxmlDelete(tree);
 
 			lua_pushnil(L);
 
@@ -820,7 +826,7 @@ namespace raidhook
 		}
 
 		mxml_node_t *base = tree;
-		if (base && !strncmp(mxmlGetElement(base), "?xml", 4))
+		if (base && mxmlGetElement(base) && !strncmp(mxmlGetElement(base), "?xml", 4))
 		{
 			base = mxmlGetFirstChild(base);
 		}
@@ -926,7 +932,7 @@ namespace raidhook
 		}
 		catch (std::string err)
 		{
-			luaL_error(L, err.c_str());
+			luaL_error(L, "%s", err.c_str());
 			return 0; // Fix the no-return compiler warning, but this will never be called
 		}
 	}
