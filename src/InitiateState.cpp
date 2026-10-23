@@ -198,11 +198,20 @@ namespace raidhook
 		return 1;
 	}
 
+	static int luaF_pcall_proper(lua_State* L);
+
 	static int luaF_pcall(lua_State* L)
 	{
+		luaL_checkany(L, 1);
 		int args = lua_gettop(L) - 1;
 
 		lua_getglobal(L, "debug");
+		if (lua_isnil(L, -1))
+		{
+			// Debug isn't available, no traceback possible
+			lua_pop(L, 1);
+			return luaF_pcall_proper(L);
+		}
 		lua_getfield(L, -1, "traceback");
 		lua_remove(L, -2);
 		// Do not index from the top (i.e. don't use a negative index)
@@ -215,19 +224,18 @@ namespace raidhook
 		// the error message onto the stack, which should manually be popped off when done using to keep the stack balanced
 		if (result == LUA_ERRRUN)
 		{
+			// The global pcall logs errors (compat), but still returns them like the standard pcall does: false, message.
+			// The error object isn't necessarily a string.
 			size_t len;
-			RAIDHOOK_LOG_ERROR(lua_tolstring(L, -1, &len));
-			// This call pops the error message off the stack
-			lua_pop(L, 1);
-			return 0;
+			const char* message = lua_tolstring(L, -1, &len);
+			// (the extra parentheses matter: the macro streams its argument, so a bare ?: would bind after the <<)
+			RAIDHOOK_LOG_ERROR((message ? message : lua_typename(L, lua_type(L, -1))));
 		}
 		// Do not use lua_pop() as the callee function's return values may be present, which would pop one of those instead and leave
-		// the error handler on the stack
+		// the error handler on the stack. On errors, the error message is the only thing above the handler.
 		lua_remove(L, errorhandler);
 		lua_pushboolean(L, result == 0);
 		lua_insert(L, 1);
-
-		//if (result != 0) return 1;
 
 		return lua_gettop(L);
 	}
