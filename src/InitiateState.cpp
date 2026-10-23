@@ -1036,8 +1036,17 @@ namespace raidhook
 		bool is32bit = lua_toboolean(L, -1);
 		lua_pop(L, 1);
 
-		raidhook::scriptdata::ScriptData sd(len, (const uint8_t*)data);
-		std::string out = sd.GetRoot()->Serialise(is32bit);
+		std::string out;
+		try
+		{
+			raidhook::scriptdata::ScriptData sd(len, (const uint8_t*)data);
+			out = sd.GetRoot()->Serialise(is32bit);
+		}
+		catch (const std::exception& e)
+		{
+			// C++ exceptions must not unwind through the Lua VM
+			return luaL_error(L, "scriptdata recode failed: %s", e.what());
+		}
 
 		lua_pushlstring(L, out.c_str(), out.length());
 		return 1;

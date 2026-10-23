@@ -2,6 +2,8 @@
 
 #include <functional>
 #include <cassert>
+#include <cstring>
+#include <stdexcept>
 
 // For the writer
 #include <sstream>
@@ -71,21 +73,45 @@ namespace raidhook::scriptdata
 		T *items;
 	};
 
+	// The input comes from files, so every offset has to be checked against the buffer
+	static void checkRange(size_t length, uint64_t offset, uint64_t count, uint64_t item_size)
+	{
+		// count is 32-bit and item_size is small, so the product can't overflow
+		if(offset > length || count * item_size > length - offset)
+		{
+			throw std::runtime_error("Invalid scriptdata: out of bounds");
+		}
+	}
+
+	static const char *checkedString(const uint8_t *data, size_t length, uint64_t offset)
+	{
+		checkRange(length, offset, 1, 1);
+		if(!memchr(&data[offset], 0, length - offset))
+		{
+			throw std::runtime_error("Invalid scriptdata: unterminated string");
+		}
+		return (const char*) &data[offset];
+	}
+
 	template<typename T>
-	VecInfo<T> readVec(bool is32bit, const uint8_t *data, size_t &offset)
+	VecInfo<T> readVec(bool is32bit, const uint8_t *data, size_t length, size_t &offset)
 	{
 		VecInfo<T> info = {};
 
 		if(is32bit)
 		{
+			checkRange(length, offset, 1, sizeof(RawVec32));
 			RawVec32 &vec = *(RawVec32*) &data[offset];
+			checkRange(length, vec.offset, vec.count, sizeof(T));
 			info.count = vec.count;
 			info.items = (T*) &data[vec.offset];
 			offset += sizeof(RawVec32);
 		}
 		else
 		{
+			checkRange(length, offset, 1, sizeof(RawVec64));
 			RawVec64 &vec = *(RawVec64*) &data[offset];
+			checkRange(length, vec.offset, vec.count, sizeof(T));
 			info.count = vec.count;
 			info.items = (T*) &data[vec.offset];
 			offset += sizeof(RawVec64);
@@ -98,9 +124,9 @@ namespace raidhook::scriptdata
 	using Reader = std::function<void(const from&, to&)>;
 
 	template<typename from, typename to>
-	void readIntoVec(bool is32bit, std::vector<to> &res, const uint8_t *data, size_t &offset, Reader<from, to> f)
+	void readIntoVec(bool is32bit, std::vector<to> &res, const uint8_t *data, size_t length, size_t &offset, Reader<from, to> f)
 	{
-		VecInfo<from> info = readVec<from>(is32bit, data, offset);
+		VecInfo<from> info = readVec<from>(is32bit, data, length, offset);
 
 		res.clear();
 		res.resize(info.count);
@@ -126,6 +152,11 @@ namespace raidhook::scriptdata
 
 	void ScriptData::ReadTable(STable &out, std::pair<valid_t, valid_t> *data, size_t count, uint32_t meta)
 	{
+		if(meta != ~0u && meta >= strings.size())
+		{
+			throw std::runtime_error("Invalid scriptdata: bad table metatable");
+		}
+
 		for(size_t i=0; i<count; i++)
 		{
 			const SItem *key = Read(data[i].first);
@@ -182,6 +213,11 @@ namespace raidhook::scriptdata
 
 	ScriptData::ScriptData(size_t length, const uint8_t *data)
 	{
+		if(!data || length < 4)
+		{
+			throw std::runtime_error("Invalid scriptdata: too short");
+		}
+
 		bool is32bit = determine_is_32bit(length, data);
 
 		size_t offset = 0;
@@ -190,54 +226,56 @@ namespace raidhook::scriptdata
 		offset += is32bit ? 4 : 8;
 
 		static_assert(sizeof(float) == 4, "incompatible float size");
-		readIntoVec<float, SNum>(is32bit, numbers, data, offset, [](const float &in, SNum &out)
+		readIntoVec<float, SNum>(is32bit, numbers, data, length, offset, [](const float &in, SNum &out)
 		{
 			out = SNum(in);
 		});
 
 		if(is32bit)
 		{
-			readIntoVec<RawStr32, SString>(is32bit, strings, data, offset, [data](const RawStr32 &in, SString &out)
+			readIntoVec<RawStr32, SString>(is32bit, strings, data, length, offset, [data, length](const RawStr32 &in, SString &out)
 			{
-				out = SString((const char*) &data[in.str]);
+				out = SString(checkedString(data, length, in.str));
 			});
 		}
 		else
 		{
-			readIntoVec<RawStr64, SString>(is32bit, strings, data, offset, [data](const RawStr64 &in, SString &out)
+			readIntoVec<RawStr64, SString>(is32bit, strings, data, length, offset, [data, length](const RawStr64 &in, SString &out)
 			{
-				out = SString((const char*) &data[in.str]);
+				out = SString(checkedString(data, length, in.str));
 			});
 		}
 
-		readIntoVec<float[3], SVector>(is32bit, vectors, data, offset, [](const float (&in)[3], SVector &out)
+		readIntoVec<float[3], SVector>(is32bit, vectors, data, length, offset, [](const float (&in)[3], SVector &out)
 		{
 			out = SVector(in[0], in[1], in[2]);
 		});
 
-		readIntoVec<float[4], SQuaternion>(is32bit, quats, data, offset, [](const float (&in)[4], SQuaternion &out)
+		readIntoVec<float[4], SQuaternion>(is32bit, quats, data, length, offset, [](const float (&in)[4], SQuaternion &out)
 		{
 			out = SQuaternion(in[0], in[1], in[2], in[3]);
 		});
 
-		readIntoVec<uint64_t, SIdstring>(is32bit, idstrings, data, offset, [](const uint64_t &in, SIdstring &out)
+		readIntoVec<uint64_t, SIdstring>(is32bit, idstrings, data, length, offset, [](const uint64_t &in, SIdstring &out)
 		{
 			out = SIdstring(in);
 		});
 
 		if(is32bit)
 		{
-			readIntoVec<RawTable32, STable>(is32bit, tables, data, offset, [data, this](const RawTable32 &in, STable &out)
+			readIntoVec<RawTable32, STable>(is32bit, tables, data, length, offset, [data, length, this](const RawTable32 &in, STable &out)
 			{
 				out = STable();
+				checkRange(length, in.contents.offset, in.contents.count, sizeof(std::pair<valid_t, valid_t>));
 				ReadTable(out, (std::pair<valid_t, valid_t>*) &data[in.contents.offset], in.contents.count, in.meta);
 			});
 		}
 		else
 		{
-			readIntoVec<RawTable64, STable>(is32bit, tables, data, offset, [data, this](const RawTable64 &in, STable &out)
+			readIntoVec<RawTable64, STable>(is32bit, tables, data, length, offset, [data, length, this](const RawTable64 &in, STable &out)
 			{
 				out = STable();
+				checkRange(length, in.contents.offset, in.contents.count, sizeof(std::pair<valid_t, valid_t>));
 				ReadTable(out, (std::pair<valid_t, valid_t>*) &data[in.contents.offset], in.contents.count, in.meta);
 			});
 		}
@@ -249,6 +287,7 @@ namespace raidhook::scriptdata
 		numberList(idstrings);
 		numberList(tables);
 
+		checkRange(length, offset, 1, sizeof(uint32_t));
 		uint32_t *val = (uint32_t*) &data[offset];
 		root = Read(*val);
 	}
@@ -257,6 +296,15 @@ namespace raidhook::scriptdata
 	{
 		uint8_t type = val >> 24;
 		uint32_t index = val & 0xFFFFFF;
+
+		auto at = [index](const auto &items) -> const SItem*
+		{
+			if(index >= items.size())
+			{
+				throw std::runtime_error("Invalid scriptdata: bad value index");
+			}
+			return &items[index];
+		};
 
 		switch(type)
 		{
@@ -267,19 +315,19 @@ namespace raidhook::scriptdata
 		case SBool::ID_T:
 			return &SBool::STRUE;
 		case SNum::ID:
-			return &numbers[index];
+			return at(numbers);
 		case SString::ID:
-			return &strings[index];
+			return at(strings);
 		case SVector::ID:
-			return &vectors[index];
+			return at(vectors);
 		case SQuaternion::ID:
-			return &quats[index];
+			return at(quats);
 		case SIdstring::ID:
-			return &idstrings[index];
+			return at(idstrings);
 		case STable::ID:
-			return &tables[index];
+			return at(tables);
 		default:
-			throw std::exception();
+			throw std::runtime_error("Invalid scriptdata: unknown value type");
 		}
 	}
 
