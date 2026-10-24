@@ -357,6 +357,14 @@ macro(Add_Loader library_name)
 	add_dependencies(${library_name} generate_loader_asm)
 	target_link_libraries(${library_name} LINK_PRIVATE SuperBLT)
 	target_include_directories(${library_name} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/loader")
+	if(MSVC)
+		# The Visual Studio MASM rule does not create the object directory of sources in a subdirectory (loader/), so
+		# ml64 fails with A1000. PRE_BUILD runs before the compile rules of the target.
+		add_custom_command(TARGET ${library_name} PRE_BUILD
+			COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/${library_name}.dir/$<CONFIG>/loader"
+			VERBATIM
+		)
+	endif()
 endmacro()
 
 Add_Loader(WSOCK32)
