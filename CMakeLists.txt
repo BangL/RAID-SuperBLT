@@ -113,13 +113,20 @@ target_compile_options(SuperBLT PRIVATE
 	# windows.h would define min/max macros that break std::min/std::max
 	-DNOMINMAX
 )
-# General optimisation breaks calls to certain lua functions, so replace it.
-# We statically link to reduce dependencies
-foreach(flag_var CMAKE_CXX_FLAGS CMAKE_CXX_FLAGS_DEBUG CMAKE_CXX_FLAGS_RELEASE CMAKE_CXX_FLAGS_MINSIZEREL CMAKE_CXX_FLAGS_RELWITHDEBINFO)
-	if(${flag_var} MATCHES "/O2")
-		string(REGEX REPLACE "/O2" "/Od /Oi /Ot /Oy /Ob2 /GF /Gy" ${flag_var} "${${flag_var}}")
-	endif(${flag_var} MATCHES "/O2")
-endforeach(flag_var)
+# MSVC Release: full optimisation (/O2 is the default of CMake) with aggressive inlining and whole program optimisation.
+# /GL keeps the intermediate code in the objects, so the linker and lib.exe (static libraries) have to be told (/LTCG).
+function(sblt_msvc_optimize target)
+	if(MSVC)
+		target_compile_options(${target} PRIVATE $<$<CONFIG:Release>:/Ob3 /GL>)
+		get_target_property(target_type ${target} TYPE)
+		if(target_type STREQUAL "STATIC_LIBRARY")
+			set_property(TARGET ${target} APPEND_STRING PROPERTY STATIC_LIBRARY_OPTIONS "$<$<CONFIG:Release>:/LTCG>")
+		else()
+			target_link_options(${target} PRIVATE $<$<CONFIG:Release>:/LTCG>)
+		endif()
+	endif()
+endfunction()
+sblt_msvc_optimize(SuperBLT)
 
 # Link against libraries
 if(MSVC)
@@ -357,6 +364,7 @@ macro(Add_Loader library_name)
 	add_dependencies(${library_name} generate_loader_asm)
 	target_link_libraries(${library_name} LINK_PRIVATE SuperBLT)
 	target_include_directories(${library_name} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/loader")
+	sblt_msvc_optimize(${library_name})
 	if(MSVC)
 		# The Visual Studio MASM rule does not create the object directory of sources in a subdirectory (loader/), so
 		# ml64 fails with A1000. PRE_BUILD runs before the compile rules of the target.
@@ -374,6 +382,7 @@ Add_Loader(IPHLPAPI)
 ## build external updater for dll                                            ##
 ###############################################################################
 add_executable(SBLT_DLL_UPDATER updater/updater.cpp updater/compression.cpp updater/Resource.rc)
+sblt_msvc_optimize(SBLT_DLL_UPDATER)
 if(MSVC)
 	target_link_libraries(SBLT_DLL_UPDATER crypt32.lib ws2_32.lib version.lib)
 else()
