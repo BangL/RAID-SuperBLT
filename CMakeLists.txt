@@ -110,6 +110,8 @@ add_library(SuperBLT STATIC ${sources})
 
 target_compile_options(SuperBLT PRIVATE
 	-DCURL_STATICLIB
+	# windows.h would define min/max macros that break std::min/std::max
+	-DNOMINMAX
 )
 # General optimisation breaks calls to certain lua functions, so replace it.
 # We statically link to reduce dependencies
