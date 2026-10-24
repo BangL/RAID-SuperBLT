@@ -403,6 +403,11 @@ bool raidhook::tweaker::dbhook::hook_asset_load(const blt::idfile& asset_file, B
 		}
 
 		BLTAbstractDataStore* ds = DieselDB::Instance()->Open(file->bundle);
+		if (!ds)
+		{
+			RAIDHOOK_LOG_ERROR("Failed to open the bundle " << file->bundle->path << " of hooked asset " << std::hex << bundle_item.name << "." << bundle_item.ext);
+			return false;
+		}
 		*out_datastore = ds;
 		*out_pos = file->offset;
 

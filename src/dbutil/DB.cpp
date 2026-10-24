@@ -576,8 +576,98 @@ DslFile* DieselDB::Find(idstring name, idstring ext)
     return res->second;
 }
 
+// The data store of a package bundle: its files are positioned in the decompressed stream, which the file stores it in
+// blocks of 0x10000 bytes that are compressed on their own (see DslFile::ReadContents). The engine reads from such a
+// data store at the positions of the database, so it has to see the decompressed bytes.
+class BLTPackageDataStore : public BLTAbstractDataStore
+{
+  public:
+    explicit BLTPackageDataStore(const DieselBundle* bundle) : bundle(bundle)
+    {
+        in.open(bundle->path, std::ios::binary);
+    }
+    BLT_DATASTORE_DESTRUCTOR(BLTPackageDataStore)
+
+    size_t read(uint64_t position_in_file, uint8_t* data, size_t length) override
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+
+        size_t done = 0;
+        while (done < length)
+        {
+            uint64_t position = position_in_file + done;
+            if (!loadBlock(position / BlockSize))
+                break;
+
+            size_t inBlock = static_cast<size_t>(position % BlockSize);
+            if (inBlock >= block.size())
+                break;
+
+            size_t count = (std::min)(length - done, block.size() - inBlock);
+            memcpy(data + done, block.data() + inBlock, count);
+            done += count;
+        }
+        return done;
+    }
+    bool close() override { return true; }
+    size_t size() const override { return bundle->DecompressedFileSize; }
+    bool is_asynchronous() const override { return false; }
+    bool good() const override { return in.is_open(); }
+
+  private:
+    static constexpr size_t BlockSize = 0x10000;
+
+    bool loadBlock(uint64_t index)
+    {
+        if (index == blockIndex)
+            return true;
+        if (index >= bundle->ChunkOffsets.size())
+            return false;
+
+        uint32_t compressedLength = 0;
+        in.clear();
+        in.seekg(bundle->ChunkOffsets[index], std::ios::beg);
+        in.read(reinterpret_cast<char*>(&compressedLength), sizeof(compressedLength));
+        if (!in || compressedLength < sizeof(uint32_t))
+            return false;
+
+        std::vector<uint8_t> compressed(compressedLength);
+        in.read(reinterpret_cast<char*>(compressed.data()), compressed.size());
+        if (!in)
+            return false;
+
+        uint32_t decompressedSize = *reinterpret_cast<uint32_t*>(compressed.data() + (compressed.size() - sizeof(uint32_t)));
+        std::vector<uint8_t> result(decompressedSize);
+
+        auto destSize   = static_cast<uLongf>(result.size());
+        auto sourceSize = static_cast<uLongf>(compressed.size());
+        if (uncompress2(result.data(), &destSize, compressed.data(), &sourceSize) != Z_OK)
+            return false;
+
+        result.resize(destSize);
+        block      = std::move(result);
+        blockIndex = index;
+        return true;
+    }
+
+    const DieselBundle*  bundle;
+    std::ifstream        in;
+    std::mutex           mutex;
+    uint64_t             blockIndex = ~0ULL;
+    std::vector<uint8_t> block;
+};
+
 BLTAbstractDataStore* DieselDB::Open(DieselBundle* bundle)
 {
+    if (!bundle->ChunkOffsets.empty())
+    {
+        auto* store = new BLTPackageDataStore(bundle);
+        if (store->good())
+            return store;
+        delete store;
+        return nullptr;
+    }
+
     // Ideally we'd cache these to avoid opening files all the time, but this is
     // pretty much what the Linux version of PD2 seems to do internally. The
     // problem here is that the data store is reference counted by dsl::Archive, so
