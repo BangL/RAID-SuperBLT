@@ -108,8 +108,21 @@ class DBAssetHook
 	static void finalise(void* this_data);
 };
 
-// Hooks get registered from Wren while the engine looks files up from its loading threads
-static std::shared_mutex overriddenFilesMutex;
+// Hooks get registered from Wren while the engine looks files up from its loading threads.
+// This is the Windows slim reader/writer lock itself and not std::shared_mutex: with MinGW that is a pthread rwlock of
+// winpthreads, and several loading threads hung inside its unlock (the game froze while loading a map).
+class SrwLock
+{
+  public:
+	void lock() { AcquireSRWLockExclusive(&srw); }
+	void unlock() { ReleaseSRWLockExclusive(&srw); }
+	void lock_shared() { AcquireSRWLockShared(&srw); }
+	void unlock_shared() { ReleaseSRWLockShared(&srw); }
+
+  private:
+	SRWLOCK srw = SRWLOCK_INIT;
+};
+static SrwLock overriddenFilesMutex;
 static std::map<blt::idfile, std::shared_ptr<DBTargetFile>> overriddenFiles;
 
 WrenForeignMethodFn raidhook::tweaker::dbhook::bind_dbhook_method(WrenVM* vm, const char* module,
@@ -245,7 +258,7 @@ static void wrenRegisterAssetHook(WrenVM* vm)
 
 	blt::idfile file(name, ext);
 
-	std::unique_lock registration_lock(overriddenFilesMutex);
+	std::unique_lock<SrwLock> registration_lock(overriddenFilesMutex);
 	if (overriddenFiles.count(file))
 	{
 		const char* name_str = wrenGetSlotString(vm, 1);
@@ -343,7 +356,7 @@ bool raidhook::tweaker::dbhook::hook_asset_load(const blt::idfile& asset_file, B
 
 	std::shared_ptr<DBTargetFile> target_ptr;
 	{
-		std::shared_lock lock(overriddenFilesMutex);
+		std::shared_lock<SrwLock> lock(overriddenFilesMutex);
 		auto filePtr = overriddenFiles.find(asset_file);
 
 		// If the file isn't defined, we're not overriding anything
