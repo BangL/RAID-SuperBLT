@@ -99,6 +99,10 @@ target_include_directories(luajit PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CUR
 
 target_compile_definitions(lua51-shared PUBLIC LUA_BUILD_AS_DLL)
 
+# LuaJIT uses the asm keyword (lj_err.c), which strict -std=c11 does not have. Build it with GNU extensions, regardless
+# of CMAKE_C_EXTENSIONS of the top level project.
+set_target_properties(lua51 lua51-shared LuaBuildVM luajit PROPERTIES C_EXTENSIONS ON)
+
 set_property(TARGET lua51 PROPERTY
              MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
