@@ -4,7 +4,7 @@ This lists the changes between different versions of the SuperBLT DLL,
 the changes for the basemod are listed in their own changelog.
 Contributors other than maintainers are listed in parenthesis after specific changes.
 
-## Unreleased
+## Version 1.2.0.0
 
 - replaced subhook with SafetyHook (and Zydis), original functions are now called through a trampoline instead of removing and re-installing the hook
     - fixes infinite recursion in `blt.forcepcalls` when the `debug` library is unavailable
