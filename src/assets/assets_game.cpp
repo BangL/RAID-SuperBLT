@@ -37,22 +37,22 @@ class PDString
 static_assert(sizeof(PDString) == 32 + sizeof(std::string), "PDString is the wrong size!");
 
 // The signature is the same for all try_open methods, so one typedef will work for all of them.
-typedef void(__thiscall* try_open_t)(void* this_, void* archive, blt::idstring* type, blt::idstring* name, unsigned long long u1, unsigned long long u2);
+typedef void*(__thiscall* try_open_t)(void* this_, void* archive, blt::idstring* type, blt::idstring* name, unsigned long long u1, unsigned long long u2);
 
-static void hook_load(safetyhook::InlineHook& hook, void* this_, void* archive, blt::idstring* type, blt::idstring* name, unsigned long long u1, unsigned long long u2);
+static void* hook_load(safetyhook::InlineHook& hook, void* this_, void* archive, blt::idstring* type, blt::idstring* name, unsigned long long u1, unsigned long long u2);
 
 #define DECLARE_PASSTHROUGH(func)                                                                                                                 \
 	SBLT_DECLARE_HOOK(hook_##func);                                                                                                       \
-	void stub_##func(void* this_, void* archive, blt::idstring* type, blt::idstring* name, unsigned long long u1, unsigned long long u2) \
+	void* stub_##func(void* this_, void* archive, blt::idstring* type, blt::idstring* name, unsigned long long u1, unsigned long long u2) \
 	{                                                                                                                                               \
-		hook_load(hook_##func, this_, archive, type, name, u1, u2);                                                                 \
+		return hook_load(hook_##func, this_, archive, type, name, u1, u2);                                                          \
 	}
 
 #define DECLARE_PASSTHROUGH_ARRAY(id)                                                                                                           \
 	SBLT_DECLARE_HOOK(hook_##id);                                                                                                       \
-	void stub_##id(void* this_, void* archive, blt::idstring* type, blt::idstring* name, unsigned long long u1, unsigned long long u2) \
+	void* stub_##id(void* this_, void* archive, blt::idstring* type, blt::idstring* name, unsigned long long u1, unsigned long long u2) \
 	{                                                                                                                                             \
-		hook_load(hook_##id, this_, archive, type, name, u1, u2);                                            \
+		return hook_load(hook_##id, this_, archive, type, name, u1, u2);                                     \
 	}
 
 // Approximate structure from IDA, zero idea how accurate it is, but we've got the important ones here.
@@ -96,7 +96,9 @@ static void* Archive_ctor(Archive* archive, PDString* pd_name, BLTAbstractDataSt
 	return archive;
 }
 
-static void hook_load(safetyhook::InlineHook& hook, void* this_, void* archive, blt::idstring* type, blt::idstring* name, unsigned long long u1, unsigned long long u2)
+// The engine's try_open functions return the archive they were given (in rax), and the callers use it. A hook that
+// returns nothing only works as long as the compiler happens to leave the callee's rax alone, which MSVC did and GCC does not.
+static void* hook_load(safetyhook::InlineHook& hook, void* this_, void* archive, blt::idstring* type, blt::idstring* name, unsigned long long u1, unsigned long long u2)
 {
 	// Try hooking this asset, and see if we need to handle it differently
 	BLTAbstractDataStore* datastore = nullptr;
@@ -110,10 +112,10 @@ static void hook_load(safetyhook::InlineHook& hook, void* this_, void* archive, 
 	{
 		PDString pd_name(ds_name);
 		Archive_ctor((Archive*) archive, &pd_name, datastore, pos, len, false);
-		return;
+		return archive;
 	}
 
-	hook.call<void>(this_, archive, type, name, u1, u2);
+	void* result = hook.call<void*>(this_, archive, type, name, u1, u2);
 
 	// Read the probably_not_loaded_flag to see if this archive failed to load - if so try again but also
 	// look for hooks with the fallback bit set
@@ -124,9 +126,11 @@ static void hook_load(safetyhook::InlineHook& hook, void* this_, void* archive, 
 		{
 			PDString pd_name(ds_name);
 			Archive_ctor((Archive*) archive, &pd_name, datastore, pos, len, false);
-			return;
+			return archive;
 		}
 	}
+
+	return result;
 }
 
 static void setup_extra_asset_hooks() {}
