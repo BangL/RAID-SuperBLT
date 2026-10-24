@@ -73,9 +73,9 @@ if not exist build (
 )
 
 REM Prepare cmake command based on the FRESH flag
-set CMAKE_CMD=cmake -S . -B build -A x64 -G "Visual Studio 17 2022" -DCMAKE_BUILD_TYPE=Release
+set CMAKE_CMD=cmake -S . -B build -A x64 -G "Visual Studio 18 2026" -DCMAKE_BUILD_TYPE=Release
 if !FRESH! EQU 1 (
-    set CMAKE_CMD=cmake --fresh -S . -B build -A x64 -G "Visual Studio 17 2022" -DCMAKE_BUILD_TYPE=Release
+    set CMAKE_CMD=cmake --fresh -S . -B build -A x64 -G "Visual Studio 18 2026" -DCMAKE_BUILD_TYPE=Release
 )
 
 REM Run CMake to generate Visual Studio solution files
