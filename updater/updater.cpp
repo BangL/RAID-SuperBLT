@@ -23,7 +23,7 @@ static const char *VERSION_URL_DLL_UPDATER = "https://api.modworkshop.net/mods/5
 static const char *VERSION_URL_DLL_WSOCK32 = "https://api.modworkshop.net/mods/49746/version";
 static const char *VERSION_URL_DLL_IPHLPAPI = "https://api.modworkshop.net/mods/49745/version";
 
-static const int UPDATER_VERSION = 2;
+static const int UPDATER_VERSION = 3;
 
 // The default timeout (10 s) is only meant for the version checks, downloads may take a lot longer
 static const long DOWNLOAD_TIMEOUT = 300L;
