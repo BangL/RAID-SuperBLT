@@ -35,7 +35,7 @@ if you cloned without `--recursive`, do this in the root of your repo:
 git submodule update --init --recursive
 ```
 
-Requirements: CMake 3.28 or newer and Python 3, plus either Visual Studio 2022 (17.8 or newer, SafetyHook needs
+Requirements: CMake 4.2 or newer (needed for the Visual Studio 18 2026 generator) and Python 3, plus either Visual Studio 2026 (SafetyHook needs
 C++23) or, on Linux, mingw-w64 (GCC 13 or newer) and Ninja. The dependencies are all submodules, nothing is downloaded
 while building.
 
@@ -52,7 +52,7 @@ You can now open the generated solution file in `/out/build/x64-Debug/SuperBLT.s
 
 If you do not see the `out` folder, click "Show All Files" in the top bar of the Solution Explorer.
 
-If you don't see the solution file, please ensure the configurations have `Visual Studio 16/17 Win64` selected as the cmake generator.
+If you don't see the solution file, please ensure the configurations have `Visual Studio 18 2026 Win64` selected as the cmake generator.
 
 At this point, you can compile your project. In Visual Studio, press F7.
 This will take some time as it compiles all of SuperBLT's dependencies and, finally, SuperBLT itself.
@@ -70,9 +70,9 @@ For the command line, navigate to your SuperBLT folder using `cd`
 Make a new directory named `build` using `mkdir build` and enter it using `cd`
 
 Then enter the following commands:
-`cmake .. -A x64 -G "Visual Studio 17 2022" -DCMAKE_BUILD_TYPE=Debug`
+`cmake .. -A x64 -G "Visual Studio 18 2026"`
 
-`msbuild SuperBLT.sln /t:Build /p:Configuration=Debug`
+`cmake --build . --config Debug`
 
 You can symlink using the following in your `RAID World War II` directory. Run:
 
