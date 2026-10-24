@@ -1,5 +1,16 @@
 #pragma once
 
+// Pointer type of a member function with the given signature, taking the this pointer as an additional first
+// parameter. Spelled as a function type, so an empty parameter list needs no __VA_OPT__ (MSVC only has it behind
+// /Zc:preprocessor).
+template<typename Signature>
+struct ThiscallPtr;
+template<typename Retn, typename... Args>
+struct ThiscallPtr<Retn(Args...)>
+{
+	using type = Retn(__thiscall *)(void*, Args...);
+};
+
 #ifdef SIG_INCLUDE_MAIN
 #include "signatures.h"
 
@@ -9,7 +20,7 @@
 	SignatureSearch name ## search(#name, &name, signature, mask, offset);
 
 #define CREATE_CALLABLE_CLASS_SIGNATURE(name, retn, signature, mask, offset, ...) \
-	typedef retn(__thiscall *name ## ptr)(void* __VA_OPT__(,) __VA_ARGS__); \
+	typedef ThiscallPtr<retn(__VA_ARGS__)>::type name ## ptr; \
 	name ## ptr name = NULL; \
 	SignatureSearch name ## search(#name, &name, signature, mask, offset);
 
@@ -21,7 +32,7 @@
 	extern name ## ptr name;
 
 #define CREATE_CALLABLE_CLASS_SIGNATURE(name, retn, signature, mask, offset, ...) \
-	typedef retn(__thiscall *name ## ptr)(void* __VA_OPT__(,) __VA_ARGS__); \
+	typedef ThiscallPtr<retn(__VA_ARGS__)>::type name ## ptr; \
 	extern name ## ptr name;
 
 #endif
