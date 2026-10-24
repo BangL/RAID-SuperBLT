@@ -55,7 +55,7 @@ jobs:
         mkdir build
         cd build
         cmake .. -A x64 -G "Visual Studio 18 2026" -DCMAKE_BUILD_TYPE=Release
-        msbuild SuperBLT.sln /t:Build /p:Configuration=Release
+        msbuild SuperBLT.slnx /t:Build /p:Configuration=Release
       shell: powershell
 
       # Step 6: Upload build artifacts
